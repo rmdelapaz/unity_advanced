@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Write automated tests for Unity 6 with the Unity Test Framework: Edit Mode [Test] vs Play Mode [UnityTest] IEnumerator, the Test Runner window, test assemblies, Arrange-Act-Assert, SetUp/TearDown, and designing testable code with interfaces and dependency injection.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 8.1: The Unity Test Framework — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 8: Testing, CI &amp; Shipping</a></li>
+            <li aria-current="page">Lesson 8.1: The Unity Test Framework</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧪 Lesson 8.1: The Unity Test Framework — Edit &amp; Play Mode Tests</h1>
+                <p class="lead">For thirty-four lessons you've written code and checked it by pressing Play and looking. That doesn't scale. Every time you refactor an inventory system or tune a Burst job, you'd have to manually re-verify everything it touches — and you won't, so regressions slip in. Automated tests fix that: they encode "this behaves correctly" as code the machine re-runs in seconds. This lesson introduces the <strong>Unity Test Framework</strong> — Unity's NUnit-based harness for both pure-logic <em>Edit Mode</em> tests and runtime <em>Play Mode</em> tests — and, just as important, how to write game code that's actually testable.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Set up a <strong>test assembly</strong> with an <code>asmdef</code> that references the Test Framework — tying back to Lesson 1.1</li>
+                        <li>Write an <strong>Edit Mode</strong> <code>[Test]</code> for pure logic and a <strong>Play Mode</strong> <code>[UnityTest] IEnumerator</code> that spans frames</li>
+                        <li>Read the <strong>Test Runner</strong> window and interpret pass/fail results</li>
+                        <li>Structure a test with <strong>Arrange-Act-Assert</strong> and share fixtures via <code>[SetUp]</code>/<code>[TearDown]</code></li>
+                        <li>Use <code>Assert.AreEqual</code> and the fluent <code>Assert.That</code> constraint model</li>
+                        <li>Make code testable with <strong>interfaces and dependency injection</strong> (Lesson 1.2), and measure with the <strong>Code Coverage</strong> package</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 70 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 1.1 (assembly definitions) and Lesson 1.2 (dependency injection); confident C#</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Automated Tests</a></li>
+                        <li><a href="#framework" class="toc-link">NUnit, Edit Mode &amp; Play Mode</a></li>
+                        <li><a href="#assembly" class="toc-link">The Test Assembly</a></li>
+                        <li><a href="#editmode" class="toc-link">An Edit Mode Test</a></li>
+                        <li><a href="#runner" class="toc-link">The Test Runner Window</a></li>
+                        <li><a href="#playmode" class="toc-link">A Play Mode Test</a></li>
+                        <li><a href="#testable" class="toc-link">Writing Testable Code</a></li>
+                        <li><a href="#coverage" class="toc-link">Code Coverage</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Automated Tests</h2>
+                <p>A test is a small program that exercises your code and <em>asserts</em> that the result is what you expect. If the assertion holds, the test passes; if not, it fails loudly and tells you exactly where. The payoff is not proving code correct once — it's proving it <em>still</em> correct after every change you make for the rest of the project's life.</p>
+                <p>That safety net is what makes the advanced work in this course sustainable. When you convert a system to a Burst job (Module 3), extract an interface for DI (Lesson 1.2), or split a monolith into assemblies (Lesson 1.1), tests tell you in seconds whether you preserved behaviour. Without them, "did I break anything?" is answered by hope.</p>
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>A <strong>regression</strong> is a bug introduced into code that used to work. The primary job of an automated test suite is <em>regression prevention</em>: it re-runs your accumulated definition of "correct" on every change, so a break surfaces the moment it happens rather than weeks later in QA — or in a player's hands.</p>
+                </div>
+            </section>
+
+            <section id="framework" class="lesson-section">
+                <h2>NUnit, Edit Mode &amp; Play Mode</h2>
+                <p>The Unity Test Framework (UTF, package <code>com.unity.test-framework</code>, installed by default) is built on <strong>NUnit</strong> — the long-standing .NET testing library — with Unity-specific extensions layered on top. If you've written NUnit tests elsewhere, the attributes (<code>[Test]</code>, <code>[SetUp]</code>, <code>Assert</code>) are exactly the same. What Unity adds is the ability to run tests <em>inside the engine</em>, in one of two modes.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>✏️ Edit Mode</h4>
+                        <p>Runs in the Editor <strong>without entering Play Mode</strong>. Fast, synchronous, ideal for <strong>pure logic</strong> — scoring math, inventory rules, state machines, save/load, data transforms. Marked with <code>[Test]</code>. This is where the bulk of a healthy suite lives.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>▶️ Play Mode</h4>
+                        <p>Enters a real runtime: <code>Awake</code>, <code>Start</code>, physics, coroutines, and frame stepping all run. Slower, but the only way to test <strong>MonoBehaviour</strong> lifecycle, physics settling, or anything that unfolds <em>over frames</em>. Marked with <code>[UnityTest]</code> and returns <code>IEnumerator</code>.</p>
+                    </div>
+                </div>
+
+                <p>The rule of thumb: push as much logic as you can into plain C# that Edit Mode can test instantly, and reserve Play Mode for the genuinely runtime-dependent behaviour. A suite that's 90% Edit Mode runs in a blink; one that leans on Play Mode for everything crawls.</p>
+            </section>
+
+            <section id="assembly" class="lesson-section">
+                <h2>The Test Assembly</h2>
+                <p>Back in <strong>Lesson 1.1</strong> you learned that an <code>.asmdef</code> file carves your code into a separately compiled assembly. Tests live in their <em>own</em> assembly for two reasons: it keeps test code out of your shipping build, and it lets the assembly reference the Test Framework's engine and editor pieces that game code shouldn't.</p>
+                <p>Create a folder (say <code>Assets/Tests/EditMode</code>), then in the Project window use <em>Create ▸ Testing ▸ Test Assembly Folder</em> — or add an <code>asmdef</code> manually. A minimal Edit Mode test assembly definition looks like this:</p>
+                <pre><code class="language-none">{
+    "name": "Game.Tests.EditMode",
+    "references": [ "Game.Runtime" ],
+    "includePlatforms": [ "Editor" ],
+    "optionalUnityReferences": [ "TestAssemblies" ]
+}</code></pre>
+                <p>The magic entry is <code>"TestAssemblies"</code> under <code>optionalUnityReferences</code> — that flag is what tells Unity to reference <code>UnityEngine.TestRunner</code> and <code>UnityEditor.TestRunner</code> and to surface this assembly in the Test Runner. The <code>references</code> array points at the game assembly under test (here <code>Game.Runtime</code>), so your tests can <em>see</em> the classes they exercise. A Play Mode test assembly is the same minus the <code>Editor</code>-only platform restriction, so it can build into a player.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Tests can only see <code>public</code> (or friend) code</h4>
+                    <p>Because the test assembly is separate, it can only reach <code>public</code> members of the assembly under test. Either test through the public surface (usually the right call), or grant access with <code>[assembly: InternalsVisibleTo("Game.Tests.EditMode")]</code> in the runtime assembly to expose <code>internal</code> members without making them public to the whole game.</p>
+                </div>
+            </section>
+
+            <section id="editmode" class="lesson-section">
+                <h2>An Edit Mode Test</h2>
+                <p>Here's a class under test — a pure scoring rule with no Unity dependencies at all, exactly the kind of logic Edit Mode tests love:</p>
+                <pre><code class="language-csharp">namespace Game.Runtime
+{
+    public static class Scoring
+    {
+        // Base points times a combo multiplier, clamped so a broken
+        // combo can never subtract points.
+        public static int ComboScore(int basePoints, int comboCount)
+        {
+            int multiplier = System.Math.Max(1, comboCount);
+            return basePoints * multiplier;
+        }
+    }
+}</code></pre>
+                <p>And the test. Notice the structure: <strong>Arrange</strong> the inputs, <strong>Act</strong> by calling the method, <strong>Assert</strong> the result. That three-beat rhythm — AAA — keeps every test readable at a glance.</p>
+                <pre><code class="language-csharp">using NUnit.Framework;
+using Game.Runtime;
+
+public class ScoringTests
+{
+    [Test]
+    public void ComboScore_MultipliesByComboCount()
+    {
+        // Arrange
+        int basePoints = 100;
+        int combo = 3;
+
+        // Act
+        int result = Scoring.ComboScore(basePoints, combo);
+
+        // Assert
+        Assert.AreEqual(300, result);
+    }
+
+    [Test]
+    public void ComboScore_TreatsZeroComboAsSingle()
+    {
+        // A broken combo should still award the base, never zero.
+        Assert.AreEqual(100, Scoring.ComboScore(100, 0));
+    }
+}</code></pre>
+                <p>Two assertion styles exist and you'll see both. The classic <code>Assert.AreEqual(expected, actual)</code> is direct. NUnit also offers a fluent <strong>constraint model</strong> via <code>Assert.That</code>, which reads like a sentence and gives richer failure messages:</p>
+                <pre><code class="language-csharp">Assert.That(result, Is.EqualTo(300));
+Assert.That(result, Is.GreaterThan(0).And.LessThanOrEqualTo(1000));
+Assert.That(names, Does.Contain("boss").And.Not.Empty);</code></pre>
+                <p>When a fixture needs shared setup, <code>[SetUp]</code> runs before <em>each</em> test and <code>[TearDown]</code> after — Unity re-creates the fixture per test so they never bleed state into one another:</p>
+                <pre><code class="language-csharp">public class InventoryTests
+{
+    private Inventory _inv;
+
+    [SetUp]
+    public void SetUp() =&gt; _inv = new Inventory(capacity: 4);
+
+    [Test]
+    public void Add_IncreasesCount()
+    {
+        _inv.Add(new Item("potion"));
+        Assert.That(_inv.Count, Is.EqualTo(1));
+    }
+
+    [TearDown]
+    public void TearDown() =&gt; _inv = null;
+}</code></pre>
+            </section>
+
+            <section id="runner" class="lesson-section">
+                <h2>The Test Runner Window</h2>
+                <p>Open <em>Window ▸ General ▸ Test Runner</em>. It has two tabs — <strong>PlayMode</strong> and <strong>EditMode</strong> — each showing a tree of your test assemblies, fixtures (classes), and individual tests. Green checks are passes, red crosses are failures. Select any node and <em>Run Selected</em>, or <em>Run All</em>. Click a failed test and the bottom pane shows the assertion that broke, the expected-vs-actual values, and a stack trace straight to the line. Because the Test Runner is a UI Toolkit window that doesn't screenshot cleanly, here it is reconstructed faithfully:</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 520" role="img" aria-labelledby="trTitle trDesc">
+                        <title id="trTitle">The Unity Test Runner window</title>
+                        <desc id="trDesc">A reconstruction of Unity's Test Runner window. A toolbar at the top has PlayMode and EditMode tabs with EditMode selected, plus Run All, Run Selected, and Run Failed buttons and a results summary reading 7 passed, 1 failed. Below is a tree: the Game.Tests.EditMode assembly contains a ScoringTests fixture with two passing tests, an InventoryTests fixture with three passing tests, and a SaveSystemTests fixture with one passing and one failing test. The failing test SaveSystem_RoundTripsGold is highlighted in red. A details pane at the bottom shows the failure message: Expected 250 but was 0, with a short stack trace.</desc>
+
+                        <rect x="0" y="0" width="900" height="520" rx="8" fill="#22262d"/>
+
+                        <!-- Title bar -->
+                        <rect x="0" y="0" width="900" height="30" rx="8" fill="#2b3038"/>
+                        <rect x="0" y="14" width="900" height="16" fill="#2b3038"/>
+                        <text x="16" y="20" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dfe8ff">Test Runner</text>
+
+                        <!-- Tabs -->
+                        <rect x="12" y="40" width="110" height="26" rx="5" fill="#30363f" stroke="#454d57"/>
+                        <text x="67" y="57" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#9fb3d0">PlayMode</text>
+                        <rect x="128" y="40" width="110" height="26" rx="5" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="183" y="57" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#ffffff">EditMode</text>
+
+                        <!-- Run buttons -->
+                        <rect x="260" y="40" width="70" height="26" rx="5" fill="#2f3945" stroke="#45525f"/>
+                        <text x="295" y="57" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#c9d4e6">Run All</text>
+                        <rect x="336" y="40" width="104" height="26" rx="5" fill="#2f3945" stroke="#45525f"/>
+                        <text x="388" y="57" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#c9d4e6">Run Selected</text>
+                        <rect x="446" y="40" width="88" height="26" rx="5" fill="#2f3945" stroke="#45525f"/>
+                        <text x="490" y="57" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#c9d4e6">Run Failed</text>
+
+                        <!-- Summary -->
+                        <circle cx="640" cy="53" r="6" fill="#4caf7d"/>
+                        <text x="652" y="57" font-family="'Segoe UI',sans-serif" font-size="12" fill="#9be6b0">7 passed</text>
+                        <circle cx="740" cy="53" r="6" fill="#d9534f"/>
+                        <text x="752" y="57" font-family="'Segoe UI',sans-serif" font-size="12" fill="#f0a5a3">1 failed</text>
+
+                        <line x1="12" y1="76" x2="888" y2="76" stroke="#3a4149" stroke-width="1"/>
+
+                        <!-- Tree -->
+                        <g font-family="'Segoe UI',sans-serif" font-size="12.5">
+                            <!-- assembly -->
+                            <text x="26" y="102" fill="#c9c2a0">▾ 📦</text>
+                            <text x="60" y="102" fill="#e6e6e6" font-weight="700">Game.Tests.EditMode</text>
+
+                            <!-- ScoringTests -->
+                            <text x="52" y="128" fill="#9be6b0">▾</text>
+                            <text x="68" y="128" fill="#cdd6e2">🗂 ScoringTests</text>
+                            <text x="86" y="150" fill="#4caf7d">✔</text>
+                            <text x="104" y="150" fill="#b8c2cf">ComboScore_MultipliesByComboCount</text>
+                            <text x="86" y="170" fill="#4caf7d">✔</text>
+                            <text x="104" y="170" fill="#b8c2cf">ComboScore_TreatsZeroComboAsSingle</text>
+
+                            <!-- InventoryTests -->
+                            <text x="52" y="196" fill="#9be6b0">▾</text>
+                            <text x="68" y="196" fill="#cdd6e2">🗂 InventoryTests</text>
+                            <text x="86" y="218" fill="#4caf7d">✔</text>
+                            <text x="104" y="218" fill="#b8c2cf">Add_IncreasesCount</text>
+                            <text x="86" y="238" fill="#4caf7d">✔</text>
+                            <text x="104" y="238" fill="#b8c2cf">Add_RejectsOverCapacity</text>
+                            <text x="86" y="258" fill="#4caf7d">✔</text>
+                            <text x="104" y="258" fill="#b8c2cf">Remove_DecreasesCount</text>
+
+                            <!-- SaveSystemTests -->
+                            <text x="52" y="284" fill="#f0a5a3">▾</text>
+                            <text x="68" y="284" fill="#cdd6e2">🗂 SaveSystemTests</text>
+                            <text x="86" y="306" fill="#4caf7d">✔</text>
+                            <text x="104" y="306" fill="#b8c2cf">SaveSystem_WritesFile</text>
+                            <!-- failing row highlighted -->
+                            <rect x="80" y="316" width="620" height="22" rx="3" fill="#43262a"/>
+                            <text x="86" y="332" fill="#d9534f">✖</text>
+                            <text x="104" y="332" fill="#f0a5a3" font-weight="700">SaveSystem_RoundTripsGold</text>
+                        </g>
+
+                        <!-- Details pane -->
+                        <line x1="12" y1="356" x2="888" y2="356" stroke="#3a4149" stroke-width="1"/>
+                        <rect x="12" y="366" width="876" height="140" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="26" y="388" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#f0a5a3">SaveSystem_RoundTripsGold — Failed</text>
+                        <text x="26" y="414" font-family="'Consolas',monospace" font-size="11.5" fill="#e6e6e6">Expected: 250</text>
+                        <text x="26" y="434" font-family="'Consolas',monospace" font-size="11.5" fill="#e6e6e6">But was:  0</text>
+                        <text x="26" y="462" font-family="'Consolas',monospace" font-size="11" fill="#8f9aa8">at SaveSystemTests.SaveSystem_RoundTripsGold ()</text>
+                        <text x="26" y="480" font-family="'Consolas',monospace" font-size="11" fill="#8f9aa8">  in Assets/Tests/EditMode/SaveSystemTests.cs:42</text>
+                    </svg>
+                    <figcaption>Figure 1: The Test Runner (reconstructed). The <strong>EditMode</strong> tab shows a tree of assemblies ▸ fixtures ▸ tests; green ✔ passed, red ✖ failed. Selecting the failed <code>SaveSystem_RoundTripsGold</code> reveals the assertion (<code>Expected 250, but was 0</code>) and a stack trace straight to the offending line. This is your day-to-day feedback loop.</figcaption>
+                </figure>
+            </section>
+
+            <section id="playmode" class="lesson-section">
+                <h2>A Play Mode Test</h2>
+                <p>Some behaviour only makes sense at runtime — a projectile that must travel for a few frames, a coroutine that resolves next frame, physics that needs to settle. For these you write a <strong>Play Mode</strong> test: mark it <code>[UnityTest]</code> and return <code>IEnumerator</code>, so you can <code>yield</code> to advance frames just like a coroutine.</p>
+                <pre><code class="language-csharp">using System.Collections;
+using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
+
+public class ProjectileTests
+{
+    [UnityTest]
+    public IEnumerator Projectile_MovesForwardOverTime()
+    {
+        // Arrange: spawn a fresh GameObject with the component under test.
+        var go = new GameObject("proj");
+        var proj = go.AddComponent&lt;Projectile&gt;();
+        proj.Speed = 5f;
+        Vector3 start = go.transform.position;
+
+        // Act: let the engine run real frames.
+        yield return null;               // one frame
+        yield return new WaitForSeconds(0.2f);
+
+        // Assert: it moved along +Z.
+        Assert.That(go.transform.position.z, Is.GreaterThan(start.z));
+
+        Object.Destroy(go);
+    }
+}</code></pre>
+                <p>The key differences from Edit Mode: <code>yield return null</code> advances exactly one frame (running every <code>Update</code>), and <code>yield return new WaitForSeconds(...)</code> lets real time pass. Anything you spawn, you clean up — a Play Mode test shares the scene with the others in its run, so leaked GameObjects cause spooky failures downstream.</p>
+                <blockquote>
+                    <strong>💡 <code>[UnitySetUp]</code> and <code>[UnityTearDown]</code>.</strong> Play Mode has coroutine-aware setup/teardown variants that also return <code>IEnumerator</code>, so you can <code>yield</code> while preparing (e.g. load a test scene with <code>SceneManager.LoadSceneAsync</code> and wait for it). Use them when plain synchronous <code>[SetUp]</code> isn't enough.
+                </blockquote>
+            </section>
+
+            <section id="testable" class="lesson-section">
+                <h2>Writing Testable Code</h2>
+                <p>The single biggest factor in whether tests are easy or agonising is the <em>design</em> of the code under test. Logic tangled directly into a <code>MonoBehaviour</code> that reaches for <code>Time.deltaTime</code>, <code>Input</code>, the network, and the file system is nearly impossible to test in isolation. Logic behind an <strong>interface</strong>, with its dependencies <strong>injected</strong> (Lesson 1.2), is trivial.</p>
+                <p>Consider a chest that grants a random reward. If it calls <code>Random.Range</code> directly, the test can't predict the result. Extract the randomness behind an interface and inject it:</p>
+                <pre><code class="language-csharp">public interface IRandomSource { int Range(int minInclusive, int maxExclusive); }
+
+public class LootChest
+{
+    private readonly IRandomSource _rng;
+    public LootChest(IRandomSource rng) =&gt; _rng = rng;   // injected
+
+    public string Open(string[] table) =&gt; table[_rng.Range(0, table.Length)];
+}</code></pre>
+                <p>Now the test supplies a <strong>fake</strong> (a "stub") that returns a known value, making the outcome deterministic:</p>
+                <pre><code class="language-csharp">private class FixedRandom : IRandomSource
+{
+    private readonly int _value;
+    public FixedRandom(int value) =&gt; _value = value;
+    public int Range(int min, int max) =&gt; _value;
+}
+
+[Test]
+public void Open_PicksEntryFromRandomIndex()
+{
+    var chest = new LootChest(new FixedRandom(2));
+    string[] table = { "coin", "gem", "crown", "dust" };
+
+    Assert.That(chest.Open(table), Is.EqualTo("crown"));   // index 2
+}</code></pre>
+                <p>This is why the architecture module comes first in the course and testing comes last: the DI, interfaces, and assembly boundaries you learned early are precisely what make the code you write testable now. The lesson generalises: <strong>separate decision-making logic from engine plumbing</strong>. Pure logic goes in plain C# classes (fast Edit Mode tests); the thin <code>MonoBehaviour</code> just wires inputs to that logic and needs only a light Play Mode test, if any.</p>
+                <div class="card card-success">
+                    <h4>✅ A quick testability checklist</h4>
+                    <ul>
+                        <li>Can I construct the class with <code>new</code> outside Play Mode? If not, it's doing too much.</li>
+                        <li>Are its external dependencies (time, random, IO, network) behind interfaces I can fake?</li>
+                        <li>Does each method have a clear input → output I can assert on, rather than only side effects?</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section id="coverage" class="lesson-section">
+                <h2>Code Coverage</h2>
+                <p>Once you have tests, a natural question is <em>how much</em> of your code they actually exercise. Unity's <strong>Code Coverage</strong> package (install via the Package Manager) instruments your assemblies and reports the percentage of lines and branches your tests touched, with an HTML report highlighting the untested lines in red.</p>
+                <p>Enable it (<em>Window ▸ Analysis ▸ Code Coverage</em>), tick "Generate HTML report", run your tests, and open the result. It's excellent for spotting <em>whole systems</em> that no test ever reaches. But treat the number as a flashlight, not a target: chasing 100% coverage rewards writing shallow tests for trivial getters while a single well-designed test of critical logic is worth more. Aim to cover the code where a bug would <em>hurt</em> — scoring, saves, economy, matchmaking — and don't sweat coverage on thin glue.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Coverage measures execution, not correctness</h4>
+                    <p>A line can be 100% covered by a test that never asserts anything meaningful about it. High coverage with weak assertions is a false sense of security. Coverage tells you what you <em>haven't</em> tested; only good assertions tell you whether what you tested is <em>right</em>.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Test a health system</h3>
+                    <p><strong>Objective:</strong> Write Edit Mode tests for a small pure-logic class.</p>
+                    <p>Given this class in your <code>Game.Runtime</code> assembly:</p>
+                    <pre><code class="language-csharp">public class Health
+{
+    public int Current { get; private set; }
+    public int Max { get; }
+    public bool IsDead =&gt; Current &lt;= 0;
+    public Health(int max) { Max = max; Current = max; }
+    public void Damage(int amount) =&gt; Current = System.Math.Max(0, Current - amount);
+    public void Heal(int amount) =&gt; Current = System.Math.Min(Max, Current + amount);
+}</code></pre>
+                    <p>Create a test assembly and write tests that verify: (1) damage reduces <code>Current</code>; (2) damage can't go below zero and <code>IsDead</code> becomes true; (3) healing never exceeds <code>Max</code>. Use Arrange-Act-Assert and a <code>[SetUp]</code> that builds a fresh <code>Health(100)</code>.</p>
+                    <details>
+                        <summary>✅ Solution</summary>
+                        <pre><code class="language-csharp">using NUnit.Framework;
+using Game.Runtime;
+
+public class HealthTests
+{
+    private Health _hp;
+
+    [SetUp]
+    public void SetUp() =&gt; _hp = new Health(100);
+
+    [Test]
+    public void Damage_ReducesCurrent()
+    {
+        _hp.Damage(30);
+        Assert.That(_hp.Current, Is.EqualTo(70));
+    }
+
+    [Test]
+    public void Damage_ClampsAtZeroAndReportsDead()
+    {
+        _hp.Damage(999);
+        Assert.That(_hp.Current, Is.EqualTo(0));
+        Assert.That(_hp.IsDead, Is.True);
+    }
+
+    [Test]
+    public void Heal_NeverExceedsMax()
+    {
+        _hp.Damage(10);
+        _hp.Heal(50);
+        Assert.That(_hp.Current, Is.EqualTo(100));
+    }
+}</code></pre>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Make an untestable class testable</h3>
+                    <p>A <code>DailyReward</code> class computes a bonus using <code>System.DateTime.Now</code> directly, so its result depends on the wall clock and can't be tested. Sketch how you'd refactor it so a test can pin "today" to a fixed date.</p>
+                    <details>
+                        <summary>✅ Approach</summary>
+                        <p>Introduce an <code>IClock</code> interface with a <code>DateTime Now { get; }</code> and inject it into <code>DailyReward</code> (constructor injection, Lesson 1.2). Production wires a <code>SystemClock</code> that returns <code>DateTime.Now</code>; the test passes a <code>FakeClock</code> returning a fixed date, so the bonus calculation becomes deterministic and assertable. Same pattern as the <code>IRandomSource</code> example — hide the non-deterministic dependency behind an interface you can substitute.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> You need to test pure scoring math with no runtime behaviour. Which test type fits best?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Pure logic with no MonoBehaviour lifecycle is exactly what fast, synchronous Edit Mode [Test] methods are for.">A) An Edit Mode <code>[Test]</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Play Mode enters a runtime and is slower — overkill for logic with no frames or lifecycle involved.">B) A Play Mode <code>[UnityTest]</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Coverage measures how much code tests touch; it isn't itself a test type.">C) A Code Coverage report</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What makes an assembly show up in the Test Runner and gain access to the NUnit/UTF APIs?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Naming a file *Tests.cs does nothing on its own; it's the assembly definition that matters.">A) Naming test files with a <code>Tests</code> suffix</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! An asmdef with the TestAssemblies optional reference pulls in UnityEngine/UnityEditor.TestRunner and surfaces the assembly in the Test Runner.">B) An <code>asmdef</code> with the <code>TestAssemblies</code> optional reference</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A [Test] attribute marks a method, but without a properly configured test assembly it won't be discovered.">C) Adding <code>[Test]</code> to any method anywhere</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why return <code>IEnumerator</code> from a <code>[UnityTest]</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It has nothing to do with returning multiple assertions; assertions run inline.">A) So the test can return several results at once</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Returning IEnumerator lets the test yield to advance frames (yield return null) or wait real time, so it can observe behaviour that unfolds over multiple frames.">B) So it can <code>yield</code> to advance frames and let runtime behaviour unfold over time</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Edit Mode tests are the synchronous ones; the IEnumerator is specifically about frame stepping.">C) Because Edit Mode tests must be enumerable</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> A class calls <code>Random.Range</code> directly and its result can't be predicted in a test. The cleanest fix is to…</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Re-running until it happens to match is flaky and defeats the purpose of a deterministic test.">A) Loop the test until the random value matches</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Extracting the randomness behind an interface (IRandomSource) and injecting a fake makes the outcome deterministic — the testable-code pattern from Lesson 1.2.">B) Put the randomness behind an interface and inject a fake in the test</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Coverage tells you what's exercised, not how to make non-deterministic code deterministic.">C) Raise the code coverage target to 100%</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>The <strong>Unity Test Framework</strong> is NUnit inside the engine, with two modes: fast synchronous <strong>Edit Mode</strong> (<code>[Test]</code>) for pure logic and runtime <strong>Play Mode</strong> (<code>[UnityTest] IEnumerator</code>) for frame-dependent behaviour.</li>
+                        <li>Tests live in their own <strong>assembly</strong>: an <code>asmdef</code> with the <code>TestAssemblies</code> optional reference, pointing at the assembly under test — a direct application of Lesson 1.1.</li>
+                        <li>Structure every test as <strong>Arrange-Act-Assert</strong>; share fixtures with <code>[SetUp]</code>/<code>[TearDown]</code>; assert with <code>Assert.AreEqual</code> or the fluent <code>Assert.That</code> constraint model.</li>
+                        <li>The <strong>Test Runner</strong> window shows assemblies ▸ fixtures ▸ tests with pass/fail and jumps you to the failing line.</li>
+                        <li>Testability is a <em>design</em> property: hide time/random/IO behind <strong>interfaces</strong> and <strong>inject</strong> them (Lesson 1.2) so tests can substitute deterministic fakes.</li>
+                        <li><strong>Code Coverage</strong> shows what you haven't tested — a flashlight, not a target; strong assertions, not high percentages, prove correctness.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Tests are only powerful if they run <em>automatically</em>, on every commit, not just when you remember. In <strong>Lesson 8.2: Automated &amp; Cloud Builds (CI/CD)</strong> you'll drive Unity from the command line in batch mode, write a C# <code>BuildScript</code> that calls <code>BuildPipeline.BuildPlayer</code>, and wire a GitHub Actions pipeline that runs your new test suite and produces a build artifact — turning "I tested it on my machine" into "the server proves it on every push."</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧪 You have a safety net</h3>
+                    <p>A green Test Runner is permission to refactor fearlessly. Every system you built in this course becomes safer to change the moment it's under test.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_34.html" class="prev-lesson">← Previous: A Level-Layout Tool with Addressable Loading</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_36.html" class="next-lesson">Next: Automated &amp; Cloud Builds (CI/CD) →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

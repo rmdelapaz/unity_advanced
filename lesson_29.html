@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Remote Procedure Calls in Netcode for GameObjects: the universal [Rpc(SendTo.x)] attribute, the Rpc naming convention, client-to-server requests and server-to-client broadcasts, RpcParams targeting, and server-side validation.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 6.4: RPCs — Remote Procedure Calls — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 6: Multiplayer — Netcode for GameObjects</a></li>
+            <li aria-current="page">Lesson 6.4: RPCs — Remote Procedure Calls</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>📡 Lesson 6.4: RPCs — Remote Procedure Calls</h1>
+                <p class="lead">NetworkVariables carry <em>state</em>; RPCs carry <em>actions</em>. A <strong>Remote Procedure Call</strong> runs a method on other machines — a client asking the server "I want to fire", or the server telling every client "play this explosion." In Unity 6, Netcode uses a single <strong>universal <code>[Rpc]</code> attribute</strong>, and this lesson teaches it precisely — because it's the piece older tutorials get wrong.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Declare an RPC with the universal <code>[Rpc(SendTo.…)]</code> attribute and the <code>Rpc</code> naming rule</li>
+                        <li>Send <strong>client → server</strong> requests and <strong>server → client</strong> broadcasts</li>
+                        <li>Choose the right <code>SendTo</code> target</li>
+                        <li>Pass parameters and target specific clients with <code>RpcParams</code></li>
+                        <li><strong>Validate</strong> requests on the server to preserve authority</li>
+                        <li>Recognise the legacy <code>[ServerRpc]</code>/<code>[ClientRpc]</code> attributes and why not to use them</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 6.1–6.3</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#what" class="toc-link">What an RPC Is</a></li>
+                        <li><a href="#universal" class="toc-link">The Universal [Rpc] Attribute</a></li>
+                        <li><a href="#sendto" class="toc-link">SendTo Targets</a></li>
+                        <li><a href="#request" class="toc-link">Client → Server Requests</a></li>
+                        <li><a href="#broadcast" class="toc-link">Server → Client Broadcasts</a></li>
+                        <li><a href="#params" class="toc-link">Parameters &amp; Targeting</a></li>
+                        <li><a href="#validate" class="toc-link">Validate on the Server</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="what" class="lesson-section">
+                <h2>What an RPC Is</h2>
+                <p>A <strong>Remote Procedure Call</strong> is a method you call on <em>your</em> machine that actually executes on <em>other</em> machines in the session. You call it like a normal method; Netcode serialises the call and its arguments, sends them across the network, and invokes the method on the target machines. It's the mechanism for the two directions NetworkVariables don't cover: a client sending a request up to the server, and the server broadcasting a momentary event down to clients.</p>
+                <p>RPCs are for <strong>events</strong> — "this happened just now." Unlike NetworkVariables, they aren't retained: a client who joins later won't receive RPCs sent before they connected. That's the litmus test from Lesson 6.3 — if a late joiner needs it, use a NetworkVariable; if it's a fleeting action, use an RPC.</p>
+            </section>
+
+            <section id="universal" class="lesson-section">
+                <h2>The Universal [Rpc] Attribute</h2>
+                <p>In current Netcode (Unity 6), you declare an RPC by marking a method with <strong><code>[Rpc(SendTo.…)]</code></strong> and giving it a name ending in <strong><code>Rpc</code></strong>. The <code>SendTo</code> value sets the default destination:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+
+// Runs on the SERVER when any client (or the server) calls it.
+[Rpc(SendTo.Server)]
+void SubmitScoreRpc(int points) { /* ... executes on the server ... */ }
+
+// Runs on ALL clients (and the host) when the server calls it.
+[Rpc(SendTo.ClientsAndHost)]
+void AnnounceWinnerRpc(FixedString32Bytes name) { /* ... executes on clients ... */ }</code></pre>
+                <div class="card card-warning">
+                    <h4>⚠️ Don't use <code>[ServerRpc]</code> / <code>[ClientRpc]</code> — they're legacy</h4>
+                    <p>Older tutorials declare <code>[ServerRpc]</code> and <code>[ClientRpc]</code> (with <code>...ServerRpc</code>/<code>...ClientRpc</code> suffixes). Those are the <strong>previous</strong> API and are superseded by the single universal <code>[Rpc(SendTo.x)]</code> attribute. Use the universal one — it's clearer, more flexible (client-to-client too), and the current standard. If a guide tells you to write <code>[ServerRpc]</code>, it's out of date.</p>
+                </div>
+                <p>The <code>Rpc</code> suffix is mandatory — the source generator uses it to identify RPC methods, and you'll get a compile error without it. Think of it as part of the syntax, not a style choice.</p>
+            </section>
+
+            <section id="sendto" class="lesson-section">
+                <h2>SendTo Targets</h2>
+                <p><code>SendTo</code> names where the RPC runs. The common values:</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>SendTo</th><th>Runs on…</th><th>Use for</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>SendTo.Server</code></td><td>the server only</td><td>a client's request to the server</td></tr>
+                            <tr><td><code>SendTo.ClientsAndHost</code></td><td>every client, including the host's client</td><td>a broadcast event everyone should see</td></tr>
+                            <tr><td><code>SendTo.NotServer</code></td><td>all clients <em>except</em> a dedicated server</td><td>visual events (server has no view)</td></tr>
+                            <tr><td><code>SendTo.Everyone</code></td><td>server and all clients</td><td>logic + visuals everywhere</td></tr>
+                            <tr><td><code>SendTo.Owner</code></td><td>the owning client only</td><td>a private message to one player</td></tr>
+                            <tr><td><code>SendTo.SpecifiedInParams</code></td><td>whoever you pass at call time</td><td>dynamic targeting</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p>For a dedicated server with no display, prefer <code>NotServer</code> for pure visual/audio effects so the headless server doesn't waste time on them; use <code>ClientsAndHost</code> when you're developing with a host and want the host's own client to see the effect too.</p>
+            </section>
+
+            <section id="request" class="lesson-section">
+                <h2>Client → Server Requests</h2>
+                <p>This is the upward direction — a client asks the server to do something. The owning client calls a <code>SendTo.Server</code> RPC; the method body runs on the server, where authority lives:</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 240" role="img" aria-labelledby="rpcTitle rpcDesc">
+                        <title id="rpcTitle">RPC directions: client request up, server broadcast down</title>
+                        <desc id="rpcDesc">The owning client calls a SendTo.Server RPC that runs on the server; the server validates and then calls a SendTo.ClientsAndHost RPC that runs on all clients to play an effect.</desc>
+                        <rect x="0" y="0" width="900" height="240" rx="8" fill="#22262d"/>
+                        <rect x="40" y="96" width="220" height="60" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="150" y="120" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dbe9f5">Owning client</text>
+                        <text x="150" y="140" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#8fd0ff">RequestFireRpc()</text>
+                        <rect x="640" y="96" width="220" height="60" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="750" y="120" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dbe9f5">All clients</text>
+                        <text x="750" y="140" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#8fd0ff">SpawnTracerRpc()</text>
+                        <rect x="350" y="86" width="200" height="80" rx="8" fill="#2c4a30" stroke="#4e8a5b"/>
+                        <text x="450" y="110" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#d6f0da">Server</text>
+                        <text x="450" y="130" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9bd0a5">validate → spawn</text>
+                        <text x="450" y="148" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9bd0a5">→ broadcast</text>
+                        <defs>
+                            <marker id="ru" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8fd0ff"/></marker>
+                            <marker id="rd" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker>
+                        </defs>
+                        <line x1="260" y1="120" x2="348" y2="120" stroke="#8fd0ff" stroke-width="2.2" marker-end="url(#ru)"/>
+                        <text x="304" y="110" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8fd0ff">SendTo.Server</text>
+                        <line x1="552" y1="126" x2="638" y2="126" stroke="#9be6b0" stroke-width="2.2" marker-end="url(#rd)"/>
+                        <text x="596" y="116" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#9be6b0">SendTo.ClientsAndHost</text>
+                        <text x="450" y="210" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">request up (client → server) · broadcast down (server → clients)</text>
+                    </svg>
+                    <figcaption>Figure 1: The two RPC directions working together — a client requests an action (up), the server validates and acts, then broadcasts the visible result to everyone (down).</figcaption>
+                </figure>
+                <pre><code class="language-csharp">public class PlayerActions : NetworkBehaviour
+{
+    void Update()
+    {
+        if (!IsOwner) return;                       // only my avatar reads my input
+        if (Input.GetKeyDown(KeyCode.Space))
+            RequestFireRpc();                        // call → runs on the server
+    }
+
+    [Rpc(SendTo.Server)]
+    void RequestFireRpc()
+    {
+        // This body executes on the SERVER.
+        // ... validate (cooldown, ammo), spawn the projectile (server-authoritative) ...
+        SpawnTracerRpc();                            // then tell everyone to show it
+    }
+}</code></pre>
+            </section>
+
+            <section id="broadcast" class="lesson-section">
+                <h2>Server → Client Broadcasts</h2>
+                <p>The downward direction — the server tells clients about a momentary event they should present. The server calls a <code>SendTo.ClientsAndHost</code> (or <code>NotServer</code>/<code>Everyone</code>) RPC:</p>
+                <pre><code class="language-csharp">    [Rpc(SendTo.ClientsAndHost)]
+    void SpawnTracerRpc()
+    {
+        // This body executes on EVERY client (and the host).
+        // Purely presentational: play the muzzle flash, tracer, and sound locally.
+        // The actual projectile/damage is server-authoritative state, not here.
+    }</code></pre>
+                <p>Keep broadcast RPCs <strong>presentational</strong> where possible — effects, sounds, animations. The <em>consequences</em> (a projectile that deals damage, a score change) belong in server-authoritative state and NetworkVariables, so a dropped RPC never desyncs the actual game, only a cosmetic flourish.</p>
+            </section>
+
+            <section id="params" class="lesson-section">
+                <h2>Parameters &amp; Targeting</h2>
+                <p>RPCs take parameters, which must be network-serialisable (the same types NetworkVariables allow — primitives, Unity structs, <code>FixedString</code>, <code>INetworkSerializable</code>). For dynamic targeting, add a trailing <code>RpcParams</code> parameter and use <code>SendTo.SpecifiedInParams</code>:</p>
+                <pre><code class="language-csharp">// Send to exactly one client, chosen at call time.
+[Rpc(SendTo.SpecifiedInParams)]
+void PrivateNoticeRpc(FixedString128Bytes message, RpcParams rpcParams = default)
+{
+    // runs only on the targeted client
+    ShowToast(message.ToString());
+}
+
+// caller (on the server):
+PrivateNoticeRpc("Your turn!", RpcTarget.Single(targetClientId, RpcTargetUse.Temp));</code></pre>
+                <p>You can also read who sent an RPC on the receiving side via the <code>RpcParams</code> receive info — useful on the server to know which client made a request. But keep parameters lean: every RPC is a network message, and big or frequent ones cost bandwidth.</p>
+            </section>
+
+            <section id="validate" class="lesson-section">
+                <h2>Validate on the Server</h2>
+                <p>This is where authority (Lesson 6.1) becomes code. A <code>SendTo.Server</code> RPC is a <em>request</em> from a machine you don't trust — so the server must <strong>validate</strong> it before acting:</p>
+                <pre><code class="language-csharp">[Rpc(SendTo.Server)]
+void RequestPickupRpc(ulong coinId)
+{
+    // Executes on the server — check the rules before granting anything.
+    if (!TryGetCoin(coinId, out var coin)) return;          // exists?
+    if (Vector3.Distance(transform.position, coin.Position) &gt; 2f) return;  // in range?
+    if (coin.Collected) return;                             // not already taken?
+
+    coin.Collect();                 // authoritative state change
+    Score.Value += 10;              // NetworkVariable → replicates to all
+}</code></pre>
+                <p>Never assume a request is legitimate just because it arrived. A cheat-client can call <code>RequestPickupRpc</code> with any coin id from anywhere — the distance and existence checks are what keep the game fair. <strong>An RPC from a client is an ask, not a command;</strong> the server decides. This single habit is the difference between a robust multiplayer game and an exploitable one.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Request-and-broadcast</h3>
+                    <p><strong>Objective:</strong> Wire both RPC directions.</p>
+                    <ol>
+                        <li>On your player, add a <code>[Rpc(SendTo.Server)] RequestPingRpc()</code> the owner calls on a key press.</li>
+                        <li>In its body (running on the server), call a <code>[Rpc(SendTo.ClientsAndHost)] ShowPingRpc(Vector3 pos)</code> passing the player's position.</li>
+                        <li>In <code>ShowPingRpc</code> (running on every client), spawn a local ping marker at <code>pos</code>.</li>
+                        <li>Run host + client. Press the key on the client — confirm the ping appears in <em>both</em> windows.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>If the ping only appears on one machine, check the suffixes end in <code>Rpc</code> and the attributes are the universal <code>[Rpc(SendTo.…)]</code> (not <code>[ServerRpc]</code>). If the client's own ping is missing, you used <code>NotServer</code> from a host — try <code>ClientsAndHost</code> so the host's client sees it too.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Close the exploit</h3>
+                    <p>A teammate's <code>[Rpc(SendTo.Server)] AddScoreRpc(int points)</code> just does <code>Score.Value += points;</code>. Explain the exploit and rewrite it safely.</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>A cheat-client can call <code>AddScoreRpc(1000000)</code> and the server blindly adds it — the client is dictating score. Fix: don't let the client send the amount at all. The server should compute the score from validated events (e.g. <code>RequestPickupRpc(coinId)</code> that checks range/existence, then adds a fixed 10). Rule: never let a client-supplied number directly drive authoritative state.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> In Unity 6 Netcode, how do you declare an RPC that runs on the server when a client calls it?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The universal [Rpc(SendTo.Server)] with an Rpc-suffixed method name is the current API.">A) <code>[Rpc(SendTo.Server)] void DoThingRpc()</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="[ServerRpc] is the legacy attribute, superseded by [Rpc].">B) <code>[ServerRpc] void DoThingServerRpc()</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="A plain method doesn't cross the network.">C) A normal method with no attribute</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why validate a <code>SendTo.Server</code> RPC's request?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The request comes from an untrusted client, so the server must check the rules before changing authoritative state.">A) It comes from an untrusted client; the server must enforce the rules</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Validation is about trust, not serialization.">B) Otherwise the parameters won't serialize</button>
+                            <button class="quiz-option" data-correct="false" data-hint="RPCs run fine without validation — they're just exploitable.">C) The RPC won't compile without it</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Should the <em>damage</em> from a shot live in a broadcast RPC or in server state?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="A dropped RPC would then desync real gameplay — bad.">A) In the broadcast RPC, so it's instant</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Consequences belong in server-authoritative state/NetworkVariables; RPCs should be presentational so a dropped one only misses a cosmetic effect.">B) In server-authoritative state; keep the RPC presentational</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Clients don't own authoritative damage.">C) On each client independently</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>An <strong>RPC</strong> runs a method on other machines — for momentary <em>events</em>, not retained state (late joiners miss them).</li>
+                        <li>Use the universal <strong><code>[Rpc(SendTo.…)]</code></strong> attribute with an <strong><code>Rpc</code></strong>-suffixed name; <code>[ServerRpc]</code>/<code>[ClientRpc]</code> are legacy.</li>
+                        <li><code>SendTo.Server</code> for client → server requests; <code>ClientsAndHost</code>/<code>NotServer</code>/<code>Everyone</code> for server → client broadcasts.</li>
+                        <li>Parameters must be network-serialisable; target specific clients with <code>RpcParams</code> + <code>SendTo.SpecifiedInParams</code>.</li>
+                        <li><strong>Validate every client request on the server</strong> — an RPC from a client is an ask, not a command.</li>
+                        <li>Keep broadcasts <strong>presentational</strong>; put consequences in server-authoritative state so a dropped RPC never desyncs gameplay.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have the whole toolkit — sessions, spawning, ownership, NetworkVariables, and RPCs. In <strong>Lesson 6.5</strong> you'll assemble them into the module's mini-project: a small authoritative multiplayer prototype where players move, act, and share synced state, host-and-client, end to end.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>📡 Actions across the wire</h3>
+                    <p>Request up with <code>SendTo.Server</code>, broadcast down with <code>SendTo.ClientsAndHost</code>, and validate everything in between. RPCs plus NetworkVariables are the full vocabulary of Netcode gameplay.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_28.html" class="prev-lesson">← Previous: NetworkVariables &amp; State Synchronization</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_30.html" class="next-lesson">Next: A Small Authoritative Multiplayer Prototype →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

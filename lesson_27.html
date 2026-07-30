@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Make GameObjects network-aware with NetworkObject, register network prefabs, auto-spawn player objects, spawn objects from the server, and understand ownership — IsOwner, OwnerClientId, and ChangeOwnership — with Netcode for GameObjects.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 6.2: NetworkObjects, Spawning &amp; Ownership — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 6: Multiplayer — Netcode for GameObjects</a></li>
+            <li aria-current="page">Lesson 6.2: NetworkObjects, Spawning &amp; Ownership</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>👥 Lesson 6.2: NetworkObjects, Spawning &amp; Ownership</h1>
+                <p class="lead">A session with nothing in it is just a handshake. This lesson populates it: you'll make GameObjects network-aware with <code>NetworkObject</code>, auto-spawn a player for each connection, spawn objects from the server, and — the concept that trips everyone up — sort out <strong>ownership</strong>: who controls what, and who's allowed to.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Mark a GameObject as networked with <strong><code>NetworkObject</code></strong> and register network prefabs</li>
+                        <li>Auto-spawn a <strong>player object</strong> per connected client</li>
+                        <li>Spawn objects at runtime from the server with <code>.Spawn()</code></li>
+                        <li>Write a <strong><code>NetworkBehaviour</code></strong> and use <code>OnNetworkSpawn</code></li>
+                        <li>Reason about <strong>ownership</strong> — <code>IsOwner</code>, <code>OwnerClientId</code>, server-owned objects, and <code>ChangeOwnership</code></li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 6.1 (topologies &amp; authority)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#netobj" class="toc-link">The NetworkObject</a></li>
+                        <li><a href="#playerprefab" class="toc-link">The Player Prefab</a></li>
+                        <li><a href="#netbehaviour" class="toc-link">NetworkBehaviour &amp; OnNetworkSpawn</a></li>
+                        <li><a href="#spawning" class="toc-link">Spawning from the Server</a></li>
+                        <li><a href="#ownership" class="toc-link">Ownership</a></li>
+                        <li><a href="#roles" class="toc-link">Branching on Role</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="netobj" class="lesson-section">
+                <h2>The NetworkObject</h2>
+                <p>An ordinary GameObject exists on one machine. To make it exist across the network — spawned on the server and <em>replicated</em> to every client — it needs a <strong><code>NetworkObject</code></strong> component. This is the unit of network identity: it gets a unique <code>NetworkObjectId</code>, and everything networked (behaviours, variables, RPCs) lives on a GameObject that has one.</p>
+                <p>Any prefab you intend to spawn over the network must have a <code>NetworkObject</code> <em>and</em> be registered in the <strong>NetworkManager</strong>'s network-prefabs list (or a Default Network Prefabs List). Registration is how a client, receiving "spawn object of type X", knows which prefab to instantiate. Forget to register a prefab and spawning it throws — the second-most-common beginner error after forgetting authority.</p>
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>Replication:</strong> when the server spawns a <code>NetworkObject</code>, Netcode automatically creates a matching copy on every connected client and keeps them associated by <code>NetworkObjectId</code>. Despawn it on the server and it's removed everywhere. Clients never spawn networked objects themselves.</p>
+                </div>
+            </section>
+
+            <section id="playerprefab" class="lesson-section">
+                <h2>The Player Prefab</h2>
+                <p>The most common spawn is "one avatar per player." Netcode automates it: assign a <strong>Player Prefab</strong> on the <code>NetworkManager</code>, and when a client connects, the server automatically spawns that prefab and gives <strong>ownership to the connecting client</strong>. Two players connect, two player objects appear on every machine, each owned by its respective player.</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 280" role="img" aria-labelledby="spawnTitle spawnDesc">
+                        <title id="spawnTitle">Server-authoritative spawning and replication</title>
+                        <desc id="spawnDesc">The server spawns two player objects, P1 owned by client 1 and P2 owned by client 2. Each client's view shows both player objects replicated, but only the locally-owned one is highlighted as controllable.</desc>
+                        <rect x="0" y="0" width="900" height="280" rx="8" fill="#22262d"/>
+                        <!-- server -->
+                        <rect x="330" y="24" width="240" height="86" rx="8" fill="#2c4a30" stroke="#4e8a5b"/>
+                        <text x="450" y="46" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#d6f0da">Server (authority)</text>
+                        <rect x="352" y="58" width="80" height="38" rx="6" fill="#3a6a45" stroke="#5aa06a"/><text x="392" y="82" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#eafaf0">P1 (own: C1)</text>
+                        <rect x="470" y="58" width="80" height="38" rx="6" fill="#3a6a45" stroke="#5aa06a"/><text x="510" y="82" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#eafaf0">P2 (own: C2)</text>
+                        <defs><marker id="sa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker></defs>
+                        <line x1="380" y1="110" x2="200" y2="176" stroke="#9be6b0" stroke-width="2" marker-end="url(#sa)"/>
+                        <line x1="520" y1="110" x2="700" y2="176" stroke="#9be6b0" stroke-width="2" marker-end="url(#sa)"/>
+                        <text x="450" y="132" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9bd0a5">spawn → replicate to all clients</text>
+
+                        <!-- client 1 -->
+                        <rect x="40" y="180" width="320" height="80" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="200" y="202" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dbe9f5">Client 1's view</text>
+                        <rect x="66" y="212" width="120" height="36" rx="6" fill="#3a4b63" stroke="#8fd0ff" stroke-width="2"/><text x="126" y="235" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#fff">P1 ★ mine</text>
+                        <rect x="210" y="212" width="120" height="36" rx="6" fill="#31465e" stroke="#4c6a8c"/><text x="270" y="235" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ec">P2 (remote)</text>
+
+                        <!-- client 2 -->
+                        <rect x="540" y="180" width="320" height="80" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="700" y="202" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dbe9f5">Client 2's view</text>
+                        <rect x="566" y="212" width="120" height="36" rx="6" fill="#31465e" stroke="#4c6a8c"/><text x="626" y="235" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ec">P1 (remote)</text>
+                        <rect x="710" y="212" width="120" height="36" rx="6" fill="#3a4b63" stroke="#8fd0ff" stroke-width="2"/><text x="770" y="235" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#fff">P2 ★ mine</text>
+                    </svg>
+                    <figcaption>Figure 1: The server spawns both players and replicates them everywhere. Each client sees <em>both</em> avatars, but only the one it <strong>owns</strong> (★) is the one it controls; the other is a remote representation.</figcaption>
+                </figure>
+            </section>
+
+            <section id="netbehaviour" class="lesson-section">
+                <h2>NetworkBehaviour &amp; OnNetworkSpawn</h2>
+                <p>Scripts on a networked object inherit from <strong><code>NetworkBehaviour</code></strong> instead of <code>MonoBehaviour</code>. That gives them the network context — <code>IsServer</code>, <code>IsClient</code>, <code>IsOwner</code>, <code>OwnerClientId</code> — and the crucial lifecycle hook <strong><code>OnNetworkSpawn()</code></strong>, which fires when the object becomes network-ready (this is where you set things up, <em>not</em> <code>Awake</code>/<code>Start</code>, because the network identity isn't ready that early):</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+
+public class PlayerController : NetworkBehaviour
+{
+    [SerializeField] Camera playerCamera;
+
+    public override void OnNetworkSpawn()
+    {
+        // Runs on every machine that has this object. Branch by role.
+        if (IsOwner)
+        {
+            // Only the player who owns this avatar drives it.
+            playerCamera.enabled = true;
+            enabled = true;               // enable local input handling
+        }
+        else
+        {
+            // Remote copies: no local camera or input.
+            playerCamera.enabled = false;
+        }
+    }
+
+    void Update()
+    {
+        if (!IsOwner) return;             // never move someone else's avatar
+        // ... read input, request movement (Lesson 6.4) ...
+    }
+}</code></pre>
+                <p>The pattern is everywhere in netcode: <strong>guard behaviour by role</strong>. <code>if (!IsOwner) return;</code> at the top of an input method ensures each machine only drives the avatar it owns; the remote copies just display what the network tells them.</p>
+            </section>
+
+            <section id="spawning" class="lesson-section">
+                <h2>Spawning from the Server</h2>
+                <p>Beyond players, you'll spawn projectiles, pickups, enemies. The rule from Lesson 6.1 holds: <strong>only the server spawns</strong>. You instantiate the prefab and call <code>.Spawn()</code> on its <code>NetworkObject</code> — Netcode replicates it to all clients:</p>
+                <pre><code class="language-csharp">// Runs on the SERVER only (e.g. inside a server-side method or an RPC target).
+public void SpawnPickup(Vector3 position)
+{
+    if (!IsServer) return;                       // guard: server authority
+
+    GameObject go = Instantiate(pickupPrefab, position, Quaternion.identity);
+    NetworkObject netObj = go.GetComponent&lt;NetworkObject&gt;();
+    netObj.Spawn();                              // replicate to every client
+}</code></pre>
+                <p>To spawn something a specific player should control, use <code>netObj.SpawnWithOwnership(clientId)</code> instead. To remove it, the server calls <code>netObj.Despawn()</code> (optionally destroying it). A client that tries to call <code>Spawn()</code> gets an error — spawning is a server privilege.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Don't <code>Instantiate</code> networked prefabs on clients</h4>
+                    <p>A client that instantiates a networked prefab locally creates a "ghost" that isn't part of the session — it won't replicate, won't sync, and desyncs the game. If a client needs something to appear, it <em>asks the server</em> (an RPC, Lesson 6.4), and the server spawns it for everyone.</p>
+                </div>
+            </section>
+
+            <section id="ownership" class="lesson-section">
+                <h2>Ownership</h2>
+                <p><strong>Ownership</strong> is which client (or the server) a <code>NetworkObject</code> "belongs" to. It matters because ownership decides who's allowed to drive certain things — an owner can be given write permission on a NetworkVariable, and RPCs can target the owner. Key facts:</p>
+                <ul>
+                    <li>By default, spawned objects are <strong>owned by the server</strong> (owner client id 0 for the host). Player prefabs are the exception — owned by their player.</li>
+                    <li><code>IsOwner</code> is true on the machine that owns the object; <code>OwnerClientId</code> is that client's id.</li>
+                    <li>The server can transfer ownership with <code>netObj.ChangeOwnership(clientId)</code> (e.g. a player picks up a movable crate and should now drive it).</li>
+                    <li>Ownership is <em>not</em> a security guarantee by itself — even the owner's inputs should be validated by the server for anything competitive. Authority still lives on the server.</li>
+                </ul>
+                <p>A useful way to hold it: <strong>ownership answers "who drives this?", authority answers "who decides the truth?"</strong> Often the server keeps authority even over objects a client owns — the client requests, the server confirms.</p>
+            </section>
+
+            <section id="roles" class="lesson-section">
+                <h2>Branching on Role</h2>
+                <p>Because one build runs as server, host, or client, your networked code constantly asks "which am I?" The properties on <code>NetworkBehaviour</code>:</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Property</th><th>True when…</th><th>Typical use</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>IsServer</code></td><td>this instance is the server (incl. host)</td><td>authoritative logic, spawning, validation</td></tr>
+                            <tr><td><code>IsClient</code></td><td>this instance is a client (incl. host)</td><td>visuals, UI, local prediction</td></tr>
+                            <tr><td><code>IsHost</code></td><td>server and client in one</td><td>rare special-casing</td></tr>
+                            <tr><td><code>IsOwner</code></td><td>this machine owns this object</td><td>read input, drive the avatar</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p>Most bugs in early netcode come from missing one of these guards — moving a non-owned avatar, running server logic on a client, or spawning off the server. Reach for the right check first and the logic follows.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Two players in a scene</h3>
+                    <p><strong>Objective:</strong> See replication and ownership for real.</p>
+                    <ol>
+                        <li>Make a Player prefab: a capsule with a <code>NetworkObject</code> and the <code>PlayerController</code> above; assign it as the NetworkManager's <strong>Player Prefab</strong>.</li>
+                        <li>Add simple owner-only movement in <code>Update</code> (guarded by <code>if (!IsOwner) return;</code>) that moves the transform with WASD.</li>
+                        <li>Build; run one as Host and one as Client. Move each — confirm each window only controls <em>its own</em> capsule, while both capsules appear in both windows.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Because there's no NetworkVariable or RPC yet, the moved position may not sync to the other machine — that's the next two lessons. For now, the win is seeing <em>two owned player objects</em> replicate and each obey only its owner's input.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Who owns it?</h3>
+                    <p>State the default owner of: (a) a player avatar spawned when client 5 connects; (b) an enemy spawned by the server with <code>netObj.Spawn()</code>; (c) a crate after the server calls <code>netObj.ChangeOwnership(3)</code>.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>Client 5</strong> — player prefabs are owned by the connecting client. (b) <strong>The server</strong> — plain <code>Spawn()</code> is server-owned by default. (c) <strong>Client 3</strong> — ownership was transferred. In all cases the server still holds authority over the game rules.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What must a prefab have to be spawned over the network?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It needs a NetworkObject and must be registered in the NetworkManager's prefab list.">A) A <code>NetworkObject</code> component, and registration in the NetworkManager</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A Rigidbody is unrelated to network identity.">B) A Rigidbody</button>
+                            <button class="quiz-option" data-correct="false" data-hint="MonoBehaviour alone gives no network identity.">C) Only a MonoBehaviour script</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Where should you initialise a networked script — and why?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Network identity isn't ready in Awake.">A) <code>Awake</code>, as usual</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! OnNetworkSpawn fires when the network identity is ready, so IsOwner/IsServer are valid there.">B) <code>OnNetworkSpawn</code>, because the network identity is ready then</button>
+                            <button class="quiz-option" data-correct="false" data-hint="OnGUI is for UI, not init.">C) <code>OnGUI</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> A client calls <code>Instantiate</code> on a networked enemy prefab locally. What happens?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It creates a non-replicated ghost that desyncs the game; only the server should spawn networked objects.">A) It creates a non-networked ghost that desyncs the game</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Clients can't spawn into the session; only the server replicates.">B) It spawns for everyone, same as the server doing it</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It won't error at Instantiate, which is why it's a sneaky bug.">C) Nothing at all is created</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A <strong><code>NetworkObject</code></strong> makes a GameObject network-identifiable and replicable; spawnable prefabs must be registered on the NetworkManager.</li>
+                        <li>Assign a <strong>Player Prefab</strong> and Netcode auto-spawns one per client, owned by that client.</li>
+                        <li>Networked scripts extend <strong><code>NetworkBehaviour</code></strong> and initialise in <strong><code>OnNetworkSpawn</code></strong>, branching on role.</li>
+                        <li><strong>Only the server spawns</strong>: <code>Instantiate</code> + <code>NetworkObject.Spawn()</code> (or <code>SpawnWithOwnership</code>); clients ask the server instead.</li>
+                        <li><strong>Ownership</strong> (<code>IsOwner</code>/<code>OwnerClientId</code>, <code>ChangeOwnership</code>) says "who drives it"; <strong>authority</strong> still says "who decides the truth" — usually the server.</li>
+                        <li>Guard everything by role — <code>if (!IsOwner) return;</code>, <code>if (!IsServer) return;</code> — to avoid the classic netcode bugs.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Your player objects exist on every machine but don't yet <em>agree</em> on their state. In <strong>Lesson 6.3: NetworkVariables &amp; State Synchronization</strong> we make the server's values automatically replicate to clients — health bars, scores, positions that stay in sync.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>👥 The session has players</h3>
+                    <p>NetworkObjects replicate, players auto-spawn, ownership decides control. With the objects in place, the next step is keeping their <em>state</em> agreed across the network.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_26.html" class="prev-lesson">← Previous: Networking Foundations — Client/Server &amp; Topologies</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_28.html" class="next-lesson">Next: NetworkVariables &amp; State Synchronization →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

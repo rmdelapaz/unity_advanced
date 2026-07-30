@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="NativeContainers and the Job System safety system: unmanaged GC-free collections, allocators and their lifetimes, disposal and leak detection, and the [ReadOnly]/[WriteOnly] attributes that keep parallel jobs race-free.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 3.3: NativeContainers &amp; the Safety System — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 3: The Job System &amp; Burst</a></li>
+            <li aria-current="page">Lesson 3.3: NativeContainers &amp; the Safety System</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧱 Lesson 3.3: NativeContainers &amp; the Safety System</h1>
+                <p class="lead">Jobs run on data, and that data lives in <strong>NativeContainers</strong> — unmanaged, garbage-free collections Unity can safely share across threads. Get their <strong>allocators</strong>, <strong>disposal</strong>, and the <strong>safety system</strong> right and multithreading becomes routine; get them wrong and you get leaks, exceptions, or (without the safety net) silent corruption. This lesson makes native memory second nature.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain why jobs need <strong>NativeContainers</strong> instead of managed collections</li>
+                        <li>Choose the right container — <code>NativeArray</code>, <code>NativeList</code>, <code>NativeHashMap</code>, <code>NativeReference</code></li>
+                        <li>Pick the correct <strong>allocator</strong> (<code>Temp</code>, <code>TempJob</code>, <code>Persistent</code>) for a container's lifetime</li>
+                        <li>Dispose containers correctly — directly, via a job handle, or automatically</li>
+                        <li>Use <code>[ReadOnly]</code>/<code>[WriteOnly]</code> and understand how the <strong>safety system</strong> catches races and leaks</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 3.2 (Your First Job)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Not Just Use List&lt;T&gt;?</a></li>
+                        <li><a href="#family" class="toc-link">The Container Family</a></li>
+                        <li><a href="#allocators" class="toc-link">Allocators &amp; Lifetimes</a></li>
+                        <li><a href="#dispose" class="toc-link">Disposal &amp; Leak Detection</a></li>
+                        <li><a href="#safety" class="toc-link">The Safety System</a></li>
+                        <li><a href="#disposejob" class="toc-link">Disposing Alongside a Job</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Not Just Use List&lt;T&gt;?</h2>
+                <p>A regular <code>List&lt;T&gt;</code> or <code>T[]</code> is a <strong>managed</strong> object: it lives on the garbage-collected heap, it can be moved by the GC, and its memory layout isn't guaranteed. None of that is safe to hand to another thread, and all of it generates the GC pressure you learned to avoid in <a href="lesson_08.html">Lesson 2.3</a>.</p>
+                <p><strong>NativeContainers</strong> solve both problems. They wrap a block of <strong>unmanaged</strong> memory (allocated outside the GC heap), so they generate zero garbage and never move. They store only <strong>blittable</strong> value types, so their bytes can be shared across threads directly. And they carry <strong>safety handles</strong> that let Unity track who is allowed to read or write them at any moment. The trade-off: because they're outside the GC, <em>you</em> are responsible for freeing them.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>Blittable</strong> types have an identical representation in managed and native memory — the numeric primitives, <code>bool</code>ish flags, and structs made only of those (including <code>Unity.Mathematics</code> types like <code>float3</code>). Reference types (<code>string</code>, arrays, class instances) are not blittable and can't live in a NativeContainer.</p>
+                </div>
+            </section>
+
+            <section id="family" class="lesson-section">
+                <h2>The Container Family</h2>
+                <p><code>NativeArray&lt;T&gt;</code> is the workhorse, but the <strong>Unity.Collections</strong> package ships a whole family for different shapes of data:</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Container</th><th>Use it for</th><th>Notes</th></tr>
+                        </thead>
+                        <tbody>
+                            <tr><td><code>NativeArray&lt;T&gt;</code></td><td>A fixed-size buffer of values</td><td>The default; index like an array</td></tr>
+                            <tr><td><code>NativeList&lt;T&gt;</code></td><td>A growable list</td><td>Add/remove; resizes like <code>List&lt;T&gt;</code></td></tr>
+                            <tr><td><code>NativeHashMap&lt;K,V&gt;</code></td><td>A dictionary</td><td>Also <code>NativeParallelHashMap</code> for parallel writes</td></tr>
+                            <tr><td><code>NativeQueue&lt;T&gt;</code></td><td>A FIFO queue</td><td>Producer/consumer between jobs</td></tr>
+                            <tr><td><code>NativeReference&lt;T&gt;</code></td><td>A single shared value</td><td>Return one result from a job (e.g. a sum)</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p>They behave like their managed cousins but with the native rules. For example, a growable list you fill from a job:</p>
+                <pre><code class="language-csharp">using Unity.Collections;
+
+var results = new NativeList&lt;int&gt;(Allocator.TempJob);   // starts empty, grows
+results.Add(42);
+results.Add(7);
+int first = results[0];
+results.Dispose();
+
+// A single value out of a reduction job:
+var total = new NativeReference&lt;float&gt;(Allocator.TempJob);
+// ... job writes total.Value ...
+float sum = total.Value;
+total.Dispose();</code></pre>
+                <blockquote>
+                    <strong>💡 Fixed strings.</strong> Since <code>string</code> isn't blittable, jobs use <code>FixedString32Bytes</code>, <code>FixedString128Bytes</code>, etc. — inline, stack-sized strings you <em>can</em> store in a NativeContainer. Handy for names or tags inside ECS components.
+                </blockquote>
+            </section>
+
+            <section id="allocators" class="lesson-section">
+                <h2>Allocators &amp; Lifetimes</h2>
+                <p>Every NativeContainer is created with an <strong>allocator</strong>, and choosing the right one is about <em>how long the container needs to live</em>. There are three you'll use constantly:</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>⚡ Allocator.Temp</h4>
+                        <p>Fastest, for data used <strong>within a single function call / frame</strong> on one thread. Auto-freed very quickly. <em>Cannot</em> be passed to a job that outlives the call. Great for scratch buffers.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🧵 Allocator.TempJob</h4>
+                        <p>For data handed to a <strong>job</strong>, expected to live at most a few frames. This is the default when scheduling work. If you don't dispose it within ~4 frames, Unity warns you.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>♾️ Allocator.Persistent</h4>
+                        <p>For data that lives <strong>a long time</strong> — allocated once (e.g. in <code>Awake</code>/<code>OnCreate</code>), reused across many frames, freed on teardown. Slowest to allocate, so don't do it per frame.</p>
+                    </div>
+                </div>
+
+                <p>The rule of thumb: scratch data inside one method → <code>Temp</code>; buffers you fill and hand to this frame's jobs → <code>TempJob</code>; long-lived buffers you allocate once and keep → <code>Persistent</code>. A frequent beginner mistake is allocating a big <code>Persistent</code> array every frame instead of once — that's just slow malloc/free churn dressed up as native code.</p>
+            </section>
+
+            <section id="dispose" class="lesson-section">
+                <h2>Disposal &amp; Leak Detection</h2>
+                <p>Because NativeContainers live outside the GC, forgetting to <code>Dispose()</code> one is a genuine <strong>memory leak</strong> — the native block is never reclaimed. Unity ships a <strong>leak detection</strong> system that catches this: allocate a <code>TempJob</code> container and fail to free it in time, and the console prints a warning that even points back to the allocation site.</p>
+                <pre><code class="language-csharp">var buffer = new NativeArray&lt;float3&gt;(1000, Allocator.Persistent);
+try
+{
+    // ... use buffer across frames ...
+}
+finally
+{
+    if (buffer.IsCreated) buffer.Dispose();   // always free it
+}</code></pre>
+                <p>For long-lived <code>Persistent</code> containers on a MonoBehaviour or system, the natural place to dispose is <code>OnDestroy()</code> (or a system's <code>OnDestroy</code>). Guard with <code>IsCreated</code> so you never double-dispose. Think of every <code>new NativeArray(...)</code> as opening a resource that you are on the hook to close.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ NativeContainers are copied by value — but share memory</h4>
+                    <p>A <code>NativeArray</code> is a struct, so assigning it copies a lightweight handle, not the data — both copies point at the <em>same</em> native memory. Dispose one and the other becomes invalid. Don't keep stray copies around expecting independent buffers; there's one owner and one <code>Dispose()</code>.</p>
+                </div>
+            </section>
+
+            <section id="safety" class="lesson-section">
+                <h2>The Safety System</h2>
+                <p>In the editor and development builds, every NativeContainer carries an <strong>AtomicSafetyHandle</strong> that tracks who may touch it right now. This is what threw the exception in <a href="lesson_12.html">Lesson 3.2</a> when we broke the golden rule, and it's what makes parallel jobs trustworthy. It enforces three things:</p>
+                <ul>
+                    <li><strong>No use-after-dispose</strong> — touching a freed container throws immediately, instead of reading garbage.</li>
+                    <li><strong>No unsynchronised sharing</strong> — if a job is writing a container, nothing else (another job or the main thread) may read or write it until that job completes, unless you declared a dependency.</li>
+                    <li><strong>Read/write intent</strong> — the <code>[ReadOnly]</code> and <code>[WriteOnly]</code> attributes tell the system your access pattern.</li>
+                </ul>
+                <p>Those attributes aren't just documentation — they unlock parallelism. Mark an input <code>[ReadOnly]</code> and the safety system knows <em>many</em> jobs can read that array at the same time (readers don't conflict). Leave it read-write and it must assume you might write, so it serialises access:</p>
+                <pre><code class="language-csharp">struct FlockJob : IJobParallelFor
+{
+    [ReadOnly] public NativeArray&lt;float3&gt; allPositions;  // shared read — many jobs OK
+    public NativeArray&lt;float3&gt; velocities;               // this job's output
+    public void Execute(int i) { /* read allPositions, write velocities[i] */ }
+}</code></pre>
+
+                <div class="card card-success">
+                    <h4>✅ Pro Tip</h4>
+                    <p>The safety system runs in the editor and Development Builds; in a shipping build it's compiled out for speed. So <em>always</em> develop and test with it on — it turns latent race conditions into loud, immediate, fixable errors long before players ever run the release build.</p>
+                </div>
+            </section>
+
+            <section id="disposejob" class="lesson-section">
+                <h2>Disposing Alongside a Job</h2>
+                <p>There's a subtlety with the "schedule early, complete late" pattern: if a container is still being used by an in-flight job, you can't dispose it on the main thread yet — the safety system won't let you. Two clean options:</p>
+                <pre><code class="language-csharp">// Option A: dispose AFTER the job that uses it, without blocking now.
+// Dispose(handle) schedules the free to happen once the job finishes.
+JobHandle handle = job.Schedule();
+positions.Dispose(handle);
+velocities.Dispose(handle);
+// (no Complete() needed here if you don't need results this line)
+
+// Option B: let the job own the deallocation.
+struct SumJob : IJob
+{
+    [ReadOnly] [DeallocateOnJobCompletion] public NativeArray&lt;float&gt; input;
+    public NativeReference&lt;float&gt; result;
+    public void Execute() { /* ... */ }   // 'input' is freed automatically after
+}</code></pre>
+                <p><code>container.Dispose(jobHandle)</code> queues the free to run when that job completes — no main-thread stall. <code>[DeallocateOnJobCompletion]</code> hands the responsibility to the job itself for inputs you won't need afterward. Both keep the free correctly ordered <em>after</em> the work that reads the data.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Choose the allocator</h3>
+                    <p><strong>Objective:</strong> Match lifetime to allocator.</p>
+                    <p>Pick <code>Temp</code>, <code>TempJob</code>, or <code>Persistent</code> for each: (a) a scratch array of neighbour indices used and discarded inside one method, no job; (b) a positions buffer you fill this frame, hand to a job, and read back at frame end; (c) a 100k-element grid you allocate in <code>Awake</code> and reuse every frame for the object's whole life.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <code>Temp</code> — one call, one thread, auto-freed fast. (b) <code>TempJob</code> — handed to a job, lives a frame or two. (c) <code>Persistent</code> — allocated once, kept for the lifetime, disposed in <code>OnDestroy</code>. Allocating that grid every frame instead of once would be the classic performance mistake.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Fix the leak and the race</h3>
+                    <p>Read this snippet and name two bugs:</p>
+                    <pre><code class="language-csharp">var data = new NativeArray&lt;float&gt;(1000, Allocator.TempJob);
+var handle = new MyJob { data = data }.Schedule();
+float x = data[0];   // (1)
+// ...no Dispose anywhere... (2)</code></pre>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(1) Reading <code>data[0]</code> after <code>Schedule()</code> but before <code>Complete()</code> breaks the golden rule — the safety system throws. Move the read after <code>handle.Complete()</code>. (2) <code>data</code> is never disposed — a leak; add <code>data.Dispose(handle)</code> (or <code>Complete()</code> then <code>data.Dispose()</code>). Leak detection will flag it in a few frames.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why can't a job take an ordinary managed <code>List&lt;float&gt;</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Managed collections live on the GC heap, can move, and aren't safe to share across threads — NativeContainers are unmanaged and thread-trackable.">A) It's GC-managed, can be moved, and isn't safe to share across threads</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Size isn't the issue; safety and memory model are.">B) Lists are too small for jobs</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Jobs don't run C# LINQ, but that's not why List is banned.">C) Because List doesn't support indexing</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> You allocate a 100k-element buffer once in <code>Awake</code> and reuse it every frame. Which allocator?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Temp is auto-freed almost immediately — it won't survive to next frame.">A) Allocator.Temp</button>
+                            <button class="quiz-option" data-correct="false" data-hint="TempJob is for a few frames of job data, not the object's whole life.">B) Allocator.TempJob</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Persistent is for long-lived data allocated once and disposed on teardown.">C) Allocator.Persistent</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> What does marking a job's input array <code>[ReadOnly]</code> enable?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Readers don't conflict, so the safety system lets multiple jobs read the same array simultaneously.">A) Multiple jobs can read that same array in parallel</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't change disposal; you still free it.">B) The array disposes itself automatically</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's about concurrent reads, not making writes faster.">C) Writes to the array become faster</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong>NativeContainers</strong> hold blittable values in unmanaged, GC-free memory that's safe to share with jobs — but you must free them.</li>
+                        <li>Pick the container by shape: <code>NativeArray</code> (buffer), <code>NativeList</code> (growable), <code>NativeHashMap</code> (dictionary), <code>NativeReference</code> (one value).</li>
+                        <li>Match <strong>allocator to lifetime</strong>: <code>Temp</code> (one call), <code>TempJob</code> (a few frames of job data), <code>Persistent</code> (allocate once, keep).</li>
+                        <li><strong>Dispose</strong> everything; <strong>leak detection</strong> flags what you forget. Guard with <code>IsCreated</code>; a NativeArray copy shares memory.</li>
+                        <li>The <strong>safety system</strong> blocks use-after-dispose and unsynchronised sharing; <code>[ReadOnly]</code>/<code>[WriteOnly]</code> declare intent and unlock parallel reads.</li>
+                        <li>Free in-flight data with <code>Dispose(handle)</code> or <code>[DeallocateOnJobCompletion]</code> so the free is ordered after the job.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You have safe, packed, thread-shareable data. In <strong>Lesson 3.4: Parallel Jobs &amp; Burst Compilation</strong> we split work across every core with <code>IJobParallelFor</code> and switch on the <strong>Burst</strong> compiler to turn that C# into vectorised native code — the payoff the whole module has been building toward.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧱 Native memory, mastered</h3>
+                    <p>Allocate with the right lifetime, declare read/write intent, dispose exactly once. With those habits the safety system stops being a nag and starts being the reason your multithreaded code just works.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_12.html" class="prev-lesson">← Previous: Your First Job — IJob &amp; Scheduling</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_14.html" class="next-lesson">Next: Parallel Jobs &amp; Burst Compilation →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

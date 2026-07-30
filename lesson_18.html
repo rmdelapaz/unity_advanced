@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ECS systems: write an ISystem with SystemAPI.Query and idiomatic foreach, filter with EntityQuery, order work with system groups, go parallel with IJobEntity.ScheduleParallel, and make safe structural changes through an EntityCommandBuffer.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 4.3: Systems &amp; Queries — ISystem &amp; SystemAPI — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 4: DOTS / ECS</a></li>
+            <li aria-current="page">Lesson 4.3: Systems &amp; Queries — ISystem &amp; SystemAPI</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>⚙️ Lesson 4.3: Systems &amp; Queries — ISystem &amp; SystemAPI</h1>
+                <p class="lead">Components are data at rest; <strong>systems</strong> are what make them move. In this lesson you write real ECS systems with <code>ISystem</code> and <code>SystemAPI</code>, query entities with the idiomatic <code>foreach</code>, control the order systems run in, then turn that loop into a Burst-compiled parallel job with <code>IJobEntity</code> — bringing all of Module 3 to bear inside ECS.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Write an <code>ISystem</code> with <code>OnCreate</code>/<code>OnUpdate</code> and know when to use <code>SystemBase</code> instead</li>
+                        <li>Query entities with <code>SystemAPI.Query&lt;RefRW, RefRO&gt;</code> and read time/singletons via <code>SystemAPI</code></li>
+                        <li>Gate a system with <code>RequireForUpdate</code> and reason about <code>EntityQuery</code></li>
+                        <li>Order systems with <strong>system groups</strong> and <code>[UpdateInGroup]</code>/<code>[UpdateBefore]</code></li>
+                        <li>Run a system's work in parallel with <code>IJobEntity.ScheduleParallel</code></li>
+                        <li>Make safe structural changes with an <strong><code>EntityCommandBuffer</code></strong></li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 4.2 (Components &amp; Archetypes) and Module 3 (jobs/Burst)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#isystem" class="toc-link">ISystem vs SystemBase</a></li>
+                        <li><a href="#anatomy" class="toc-link">Anatomy of a System</a></li>
+                        <li><a href="#query" class="toc-link">Querying with SystemAPI</a></li>
+                        <li><a href="#groups" class="toc-link">System Groups &amp; Order</a></li>
+                        <li><a href="#parallel" class="toc-link">Going Parallel with IJobEntity</a></li>
+                        <li><a href="#ecb" class="toc-link">Structural Changes: EntityCommandBuffer</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="isystem" class="lesson-section">
+                <h2>ISystem vs SystemBase</h2>
+                <p>ECS offers two ways to write a system. <strong><code>ISystem</code></strong> is an unmanaged <code>struct</code> system: it can be Burst-compiled end to end and is the default you should reach for. <strong><code>SystemBase</code></strong> is a managed <code>class</code> system — slower, not Burst-compiled itself, but able to touch managed objects and the classic Unity API when you genuinely need to. The guidance is simple: <strong>write <code>ISystem</code> unless you must use managed data</strong>, in which case use <code>SystemBase</code>.</p>
+                <p>Systems are discovered and instantiated automatically — you don't <code>new</code> them or attach them to GameObjects. Define one and Unity creates it in the default world and ticks it every frame in the right group.</p>
+            </section>
+
+            <section id="anatomy" class="lesson-section">
+                <h2>Anatomy of a System</h2>
+                <p>Here is a complete movement system — the runtime cousin of the taste you saw in Lesson 4.1. Note the <code>partial struct</code> (source generators complete it), the <code>[BurstCompile]</code> on both the struct and its methods, and the <code>ref SystemState</code> that gives access to the world:</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Entities;
+using Unity.Transforms;
+
+[BurstCompile]
+public partial struct MovementSystem : ISystem
+{
+    [BurstCompile]
+    public void OnCreate(ref SystemState state)
+    {
+        // Don't run this system until at least one Velocity entity exists.
+        state.RequireForUpdate&lt;Velocity&gt;();
+    }
+
+    [BurstCompile]
+    public void OnUpdate(ref SystemState state)
+    {
+        float dt = SystemAPI.Time.DeltaTime;
+
+        foreach (var (transform, velocity) in
+                 SystemAPI.Query&lt;RefRW&lt;LocalTransform&gt;, RefRO&lt;Velocity&gt;&gt;())
+        {
+            transform.ValueRW.Position += velocity.ValueRO.Value * dt;
+        }
+    }
+
+    [BurstCompile]
+    public void OnDestroy(ref SystemState state) { }
+}</code></pre>
+                <ul>
+                    <li><code>OnCreate</code> runs once — set up queries and requirements here.</li>
+                    <li><code>OnUpdate</code> runs every frame the system is active.</li>
+                    <li><code>RequireForUpdate&lt;T&gt;()</code> skips <code>OnUpdate</code> entirely when no matching entity exists — cheap and tidy.</li>
+                </ul>
+            </section>
+
+            <section id="query" class="lesson-section">
+                <h2>Querying with SystemAPI</h2>
+                <p>The heart of a system is the query. <code>SystemAPI.Query&lt;…&gt;()</code> returns exactly the entities that have <em>all</em> the listed components, and you iterate them with a normal <code>foreach</code>. The wrappers declare your access:</p>
+                <ul>
+                    <li><code>RefRW&lt;T&gt;</code> — read/write access (use <code>.ValueRW</code>).</li>
+                    <li><code>RefRO&lt;T&gt;</code> — read-only access (use <code>.ValueRO</code>); lets the system parallelise reads.</li>
+                    <li><code>EnabledRefRW&lt;T&gt;</code>, <code>RefRW</code> with tags, <code>Entity</code> itself — you can also pull the entity handle into the loop.</li>
+                </ul>
+                <p><code>SystemAPI</code> is the entry point for more than queries: <code>SystemAPI.Time.DeltaTime</code>, <code>SystemAPI.GetSingleton&lt;T&gt;()</code>, <code>SystemAPI.GetComponent&lt;T&gt;(entity)</code>, and component lookups all hang off it. Behind the scenes the source generator turns your <code>Query</code> call into real chunk iteration — the packed-array walk from Lesson 4.1's diagram. You write a <code>foreach</code>; you get cache-friendly bulk processing.</p>
+
+                <blockquote>
+                    <strong>💡 Filter with tags.</strong> Add a tag to the query type list to narrow it: <code>SystemAPI.Query&lt;RefRW&lt;LocalTransform&gt;&gt;().WithAll&lt;Enemy&gt;()</code> processes only entities also carrying the <code>Enemy</code> tag. <code>WithNone&lt;T&gt;()</code> and <code>WithDisabled&lt;T&gt;()</code> refine it further.
+                </blockquote>
+            </section>
+
+            <section id="groups" class="lesson-section">
+                <h2>System Groups &amp; Order</h2>
+                <p>Systems don't run in a random order — they're organised into <strong>system groups</strong> that update in a fixed sequence each frame. The three top-level groups are:</p>
+                <div class="mermaid">
+flowchart LR
+    Init["InitializationSystemGroup<br/>spawning, input, setup"] --> Sim["SimulationSystemGroup<br/>gameplay: movement, AI, physics"] --> Pres["PresentationSystemGroup<br/>rendering: LocalToWorld → Entities Graphics"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: The three top-level system groups, in the order they update each frame.</p>
+                <p>By default a system lands in the <code>SimulationSystemGroup</code>. You place it explicitly and order it relative to siblings with attributes:</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+
+[UpdateInGroup(typeof(SimulationSystemGroup))]
+[UpdateAfter(typeof(SpawnSystem))]       // run after spawning...
+[UpdateBefore(typeof(MovementSystem))]   // ...but before movement
+public partial struct SteeringSystem : ISystem { /* ... */ }</code></pre>
+                <p>This is how you guarantee that, say, forces are computed before velocities are integrated before positions are moved — the ECS equivalent of the job dependencies you built by hand in <a href="lesson_12.html">Lesson 3.2</a>, but declared once and managed by the framework. The <strong>Systems window</strong> (<code>Window ▸ Entities ▸ Systems</code>) shows the full ordered tree at runtime.</p>
+            </section>
+
+            <section id="parallel" class="lesson-section">
+                <h2>Going Parallel with IJobEntity</h2>
+                <p>The <code>foreach</code> in <code>OnUpdate</code> runs on the main thread. For heavy work over many entities, promote it to a Burst-compiled parallel job with <strong><code>IJobEntity</code></strong> — the ECS-native cousin of <code>IJobParallelFor</code>. You write one <code>Execute</code> describing what happens to a single entity's components, and schedule it across every core:</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Entities;
+using Unity.Transforms;
+
+[BurstCompile]
+public partial struct MoveJob : IJobEntity
+{
+    public float DeltaTime;
+
+    // The parameters ARE the query: every entity with LocalTransform + Velocity.
+    void Execute(ref LocalTransform transform, in Velocity velocity)
+    {
+        transform.Position += velocity.Value * DeltaTime;
+    }
+}
+
+[BurstCompile]
+public partial struct MovementSystem : ISystem
+{
+    [BurstCompile]
+    public void OnUpdate(ref SystemState state)
+    {
+        var job = new MoveJob { DeltaTime = SystemAPI.Time.DeltaTime };
+        // Schedule across all cores; carry the system's job dependency chain.
+        state.Dependency = job.ScheduleParallel(state.Dependency);
+    }
+}</code></pre>
+                <p>Two things to notice. First, <code>IJobEntity</code> infers the query from the <code>Execute</code> parameters — <code>ref</code>/<code>in</code> mirror <code>RefRW</code>/<code>RefRO</code>. Second, you don't call <code>Complete()</code> here: you assign the handle to <code>state.Dependency</code>, and ECS completes it for you at the right moment (before any system that needs the result). This is the same "schedule early, complete late" discipline, now automated by the framework. This is exactly how the 25,600-entity scene in <a href="lesson_16.html">Lesson 4.1</a> moves at full frame rate.</p>
+            </section>
+
+            <section id="ecb" class="lesson-section">
+                <h2>Structural Changes: EntityCommandBuffer</h2>
+                <p>Remember from Lesson 4.2 that structural changes — creating, destroying, adding/removing components — can't happen safely mid-job, because they'd move entities between chunks while other threads read them. The solution is the <strong><code>EntityCommandBuffer</code></strong> (ECB): you <em>record</em> the changes during the frame and <em>play them back</em> at a safe point.</p>
+                <pre><code class="language-csharp">[BurstCompile]
+public void OnUpdate(ref SystemState state)
+{
+    // A command buffer that plays back at the start of the next simulation step.
+    var ecb = SystemAPI.GetSingleton&lt;BeginSimulationEntityCommandBufferSystem.Singleton&gt;()
+                       .CreateCommandBuffer(state.WorldUnmanaged);
+
+    foreach (var (health, entity) in
+             SystemAPI.Query&lt;RefRO&lt;Health&gt;&gt;().WithEntityAccess())
+    {
+        if (health.ValueRO.Current &lt;= 0)
+            ecb.DestroyEntity(entity);   // recorded now, executed at a safe point
+    }
+}</code></pre>
+                <p>The ECB queues <code>DestroyEntity</code>, <code>AddComponent</code>, <code>Instantiate</code>, and friends; a dedicated ECB system plays them back between system updates when no job is touching the data. For one-off editing from a <code>MonoBehaviour</code> you can also create a standalone <code>new EntityCommandBuffer(Allocator.TempJob)</code>, record, then <code>Playback(entityManager)</code> and <code>Dispose()</code>. Either way: <strong>never do structural changes directly inside a parallel job — record them into an ECB.</strong></p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Editing values ≠ structural change</h4>
+                    <p>Writing <code>transform.ValueRW.Position</code> or <code>health.ValueRW.Current</code> is <em>not</em> a structural change — you're editing data in place, which is always safe in a job. Only add/remove/create/destroy needs the ECB. Keep that line clear and most of your systems never touch an ECB at all.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: A spin system</h3>
+                    <p><strong>Objective:</strong> Write a real system from scratch.</p>
+                    <ol>
+                        <li>Define <code>Spin : IComponentData</code> with a <code>float RadiansPerSecond</code>.</li>
+                        <li>Write <code>SpinSystem : ISystem</code>. In <code>OnUpdate</code>, query <code>RefRW&lt;LocalTransform&gt;</code> + <code>RefRO&lt;Spin&gt;</code> and rotate each entity around Y by <code>spin.ValueRO.RadiansPerSecond * SystemAPI.Time.DeltaTime</code> (use <code>transform.ValueRW = transform.ValueRO.RotateY(angle)</code>).</li>
+                        <li>Add <code>[BurstCompile]</code> to the struct and both methods; gate with <code>RequireForUpdate&lt;Spin&gt;()</code> in <code>OnCreate</code>.</li>
+                        <li>Give some entities a <code>Spin</code> and watch them rotate.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p><code>LocalTransform</code> has helpers: <code>RotateY(radians)</code> returns a rotated copy. So <code>transform.ValueRW = transform.ValueRO.RotateY(spin.ValueRO.RadiansPerSecond * dt);</code>. Forgetting <code>partial</code> on the struct is the classic error — the source generator needs it.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Parallelise it</h3>
+                    <p>Convert your <code>SpinSystem</code> to use an <code>IJobEntity</code>: write <code>partial struct SpinJob : IJobEntity</code> with <code>void Execute(ref LocalTransform t, in Spin s)</code>, and in <code>OnUpdate</code> do <code>state.Dependency = new SpinJob { DeltaTime = dt }.ScheduleParallel(state.Dependency);</code>. Confirm you did <em>not</em> call <code>Complete()</code>.</p>
+                    <details>
+                        <summary>✅ Why no Complete?</summary>
+                        <p>Assigning the handle to <code>state.Dependency</code> hands completion to ECS — it will complete the job before any later system reads <code>LocalTransform</code>. Calling <code>Complete()</code> yourself would stall the main thread and throw away the overlap you just gained.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Which should you reach for by default, and why?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! ISystem is an unmanaged struct system that can be fully Burst-compiled; use SystemBase only when you need managed data.">A) <code>ISystem</code> — it's unmanaged and can be Burst-compiled end to end</button>
+                            <button class="quiz-option" data-correct="false" data-hint="SystemBase is managed and not Burst-compiled; it's the fallback, not the default.">B) <code>SystemBase</code> — it's always faster</button>
+                            <button class="quiz-option" data-correct="false" data-hint="You don't attach systems to GameObjects at all.">C) A MonoBehaviour that calls into ECS</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> In <code>SystemAPI.Query&lt;RefRW&lt;LocalTransform&gt;, RefRO&lt;Velocity&gt;&gt;()</code>, what does <code>RefRO</code> signal?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="RW means read-write; RO is the opposite.">A) The component will be written</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! RefRO is read-only access (via .ValueRO), which lets ECS parallelise reads safely.">B) Read-only access, enabling safe parallel reads</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't remove the component; it declares access intent.">C) The component is removed after the loop</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> You need to destroy entities whose health hit zero, from inside a system. What do you use?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Destroying directly mid-iteration/job is an unsafe structural change.">A) Call <code>EntityManager.DestroyEntity</code> directly inside the parallel loop</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Record DestroyEntity into an EntityCommandBuffer; it plays back at a safe point between system updates.">B) Record <code>DestroyEntity</code> into an <code>EntityCommandBuffer</code> and let it play back safely</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Editing a value is safe, but you need to remove the entity — that's structural.">C) Set the health component to a special value and hope</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Prefer <strong><code>ISystem</code></strong> (unmanaged, Burst-able); use <strong><code>SystemBase</code></strong> only for managed data. Systems are created and ticked automatically.</li>
+                        <li>A system has <code>OnCreate</code>/<code>OnUpdate</code>/<code>OnDestroy(ref SystemState)</code>; gate work with <code>RequireForUpdate&lt;T&gt;()</code>.</li>
+                        <li><code>SystemAPI.Query&lt;RefRW, RefRO&gt;()</code> + <code>foreach</code> iterates matching entities as cache-friendly chunk walks; <code>SystemAPI</code> also gives time, singletons, and lookups.</li>
+                        <li><strong>System groups</strong> (Initialization → Simulation → Presentation) order execution; <code>[UpdateInGroup]</code>/<code>[UpdateBefore]</code>/<code>[UpdateAfter]</code> refine it.</li>
+                        <li><strong><code>IJobEntity</code></strong> runs a system's per-entity work in parallel with Burst; assign the handle to <code>state.Dependency</code> — don't <code>Complete()</code> yourself.</li>
+                        <li>Do structural changes through an <strong><code>EntityCommandBuffer</code></strong>; editing component <em>values</em> in place is always safe.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You've been creating entities in code. Real projects author them visually and convert them at build time. In <strong>Lesson 4.4: Baking — From GameObjects to Entities</strong> you'll use SubScenes and <code>Baker</code>s to turn designer-friendly GameObjects into runtime entities.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>⚙️ Systems, running</h3>
+                    <p>Query the components you need, edit them in place, order the work with groups, and parallelise with <code>IJobEntity</code>. That's the ECS runtime — packed data in, Burst jobs over it, every frame.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_17.html" class="prev-lesson">← Previous: Components &amp; Archetypes</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_19.html" class="next-lesson">Next: Baking — From GameObjects to Entities →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

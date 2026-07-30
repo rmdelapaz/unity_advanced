@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Networking foundations for Unity: latency and the problems a networked game must solve, client-server vs peer-to-peer topologies, host/dedicated servers, the authoritative-server model, and getting started with Netcode for GameObjects.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 6.1: Networking Foundations — Client/Server &amp; Topologies — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 6: Multiplayer — Netcode for GameObjects</a></li>
+            <li aria-current="page">Lesson 6.1: Networking Foundations — Client/Server &amp; Topologies</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🌐 Lesson 6.1: Networking Foundations — Client/Server &amp; Topologies</h1>
+                <p class="lead">Multiplayer is a different kind of hard. The code isn't the challenge so much as the physics of the problem: messages take time to arrive, some never do, and players will cheat if you let them. Before writing a line of Netcode, you need the concepts that every design decision hangs on — topologies, authority, and why "just sync everything" doesn't work. This lesson builds that foundation.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain the core problems networking must solve — <strong>latency</strong>, loss, and trust</li>
+                        <li>Compare <strong>peer-to-peer</strong> and <strong>client-server</strong> topologies</li>
+                        <li>Distinguish a <strong>host (listen server)</strong> from a <strong>dedicated server</strong></li>
+                        <li>Explain the <strong>authoritative-server</strong> model and why it prevents cheating</li>
+                        <li>Set up <strong>Netcode for GameObjects</strong> and start a host, server, or client</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Confident C#; Intermediate architecture (events, ScriptableObjects)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#hard" class="toc-link">Why It's Hard</a></li>
+                        <li><a href="#topologies" class="toc-link">Topologies</a></li>
+                        <li><a href="#hostserver" class="toc-link">Host vs Dedicated Server</a></li>
+                        <li><a href="#authority" class="toc-link">The Authoritative Server</a></li>
+                        <li><a href="#ngo" class="toc-link">Netcode for GameObjects</a></li>
+                        <li><a href="#start" class="toc-link">Starting a Session</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="hard" class="lesson-section">
+                <h2>Why It's Hard</h2>
+                <p>A single-player game reads input and updates the world in the same instant. A networked game can't. Three hard facts shape everything:</p>
+                <ul>
+                    <li><strong>Latency.</strong> A message from one machine to another takes tens to hundreds of milliseconds. By the time you see another player's position, it's already old.</li>
+                    <li><strong>Loss &amp; order.</strong> Packets get dropped, duplicated, or arrive out of order. You can't assume every message lands, or lands in sequence.</li>
+                    <li><strong>Trust.</strong> You control the server, not the players' machines. Any value a client sends could be forged by a cheater.</li>
+                </ul>
+                <p>Every networking technique — authority, prediction, interpolation, reliable vs unreliable channels — exists to cope with one of these. This module focuses on getting a <em>correct</em>, cheat-resistant multiplayer game working; the advanced smoothing techniques (client-side prediction, lag compensation) are a specialisation we point to at the end.</p>
+            </section>
+
+            <section id="topologies" class="lesson-section">
+                <h2>Topologies</h2>
+                <p>A <strong>topology</strong> is the shape of who-talks-to-whom. Two broad families:</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 300" role="img" aria-labelledby="topoTitle topoDesc">
+                        <title id="topoTitle">Peer-to-peer versus client-server topology</title>
+                        <desc id="topoDesc">Left: peer-to-peer, four player nodes all connected to each other in a mesh. Right: client-server, a central server node with three clients each connected only to the server, not to each other.</desc>
+                        <rect x="0" y="0" width="900" height="300" rx="8" fill="#22262d"/>
+                        <text x="225" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ff9a9a">Peer-to-Peer (mesh)</text>
+                        <text x="675" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#9be6b0">Client-Server</text>
+
+                        <!-- P2P mesh -->
+                        <g stroke="#7a6a6a" stroke-width="1.5">
+                            <line x1="120" y1="90" x2="330" y2="90"/><line x1="120" y1="90" x2="120" y2="230"/><line x1="120" y1="90" x2="330" y2="230"/>
+                            <line x1="330" y1="90" x2="120" y2="230"/><line x1="330" y1="90" x2="330" y2="230"/><line x1="120" y1="230" x2="330" y2="230"/>
+                        </g>
+                        <g font-family="'Segoe UI',sans-serif" font-size="11" text-anchor="middle">
+                            <circle cx="120" cy="90" r="26" fill="#5a3a3a" stroke="#8a5a5a"/><text x="120" y="94" fill="#f0d6d6">P1</text>
+                            <circle cx="330" cy="90" r="26" fill="#5a3a3a" stroke="#8a5a5a"/><text x="330" y="94" fill="#f0d6d6">P2</text>
+                            <circle cx="120" cy="230" r="26" fill="#5a3a3a" stroke="#8a5a5a"/><text x="120" y="234" fill="#f0d6d6">P3</text>
+                            <circle cx="330" cy="230" r="26" fill="#5a3a3a" stroke="#8a5a5a"/><text x="330" y="234" fill="#f0d6d6">P4</text>
+                        </g>
+                        <text x="225" y="272" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#c9a0a0">every peer talks to every peer · no authority · hard to secure</text>
+
+                        <!-- Client-server -->
+                        <g stroke="#5a7a5c" stroke-width="1.8">
+                            <line x1="675" y1="150" x2="560" y2="90"/><line x1="675" y1="150" x2="790" y2="90"/><line x1="675" y1="150" x2="675" y2="245"/>
+                        </g>
+                        <g font-family="'Segoe UI',sans-serif" font-size="11" text-anchor="middle">
+                            <rect x="639" y="128" width="72" height="44" rx="8" fill="#2c4a30" stroke="#4e8a5b"/><text x="675" y="147" fill="#d6f0da" font-weight="700">Server</text><text x="675" y="163" font-size="9" fill="#9bd0a5">authority</text>
+                            <circle cx="560" cy="90" r="24" fill="#31465e" stroke="#4c6a8c"/><text x="560" y="94" fill="#dbe9f5">C1</text>
+                            <circle cx="790" cy="90" r="24" fill="#31465e" stroke="#4c6a8c"/><text x="790" y="94" fill="#dbe9f5">C2</text>
+                            <circle cx="675" cy="269" r="24" fill="#31465e" stroke="#4c6a8c"/><text x="675" y="273" fill="#dbe9f5">C3</text>
+                        </g>
+                        <text x="675" y="215" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9bd0a5">clients talk only to the server · one source of truth</text>
+                    </svg>
+                    <figcaption>Figure 1: In <strong>peer-to-peer</strong> every player connects to every other — simple for two players but insecure and hard to scale. In <strong>client-server</strong> everyone connects to a central server that holds the authoritative game state.</figcaption>
+                </figure>
+                <p>Nearly all modern multiplayer — and all of this module — uses <strong>client-server</strong>. It gives you a single source of truth, a natural place to enforce rules, and a far easier security story. <strong>Netcode for GameObjects</strong> is a client-server library.</p>
+            </section>
+
+            <section id="hostserver" class="lesson-section">
+                <h2>Host vs Dedicated Server</h2>
+                <p>Client-server has two flavours, and Netcode supports both:</p>
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🖥️ Dedicated Server</h4>
+                        <p>The server is its own process with no player attached — a headless build running in the cloud. Every player is a pure client. Best for competitive games and larger player counts; costs money to host.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🏠 Host (Listen Server)</h4>
+                        <p>One player's machine runs the server <em>and</em> a local client at once. Cheap and simple — perfect for co-op and small sessions — but the host has a latency advantage and the session dies if they leave.</p>
+                    </div>
+                </div>
+                <p>A <strong>host</strong> is just "server + client in one process." Everything you write works the same either way, which is why you'll usually develop with a host (one machine, easy to test) and can deploy as a dedicated server later without rewriting your gameplay code.</p>
+            </section>
+
+            <section id="authority" class="lesson-section">
+                <h2>The Authoritative Server</h2>
+                <p>Here's the single most important rule in this module: <strong>the server owns the truth</strong>. Clients send <em>requests</em> ("I want to move here", "I fired"); the server decides what actually happens and tells everyone the result. Clients never directly set shared game state.</p>
+                <p>Why? Because you don't control the players' machines. If a client could declare "my health is 999" or "I'm standing on the objective", a cheater would. With an <strong>authoritative server</strong>, a hacked client can send a lie, but the server validates it against the rules and rejects it — the worst a cheater can do is desync their own screen. This is the backbone of fair multiplayer.</p>
+                <div class="card card-success">
+                    <h4>✅ The mental model</h4>
+                    <p><strong>Server writes, clients read + request.</strong> Persistent shared state (positions, scores, health) lives on the server and is <em>synchronised</em> down to clients (NetworkVariables, Lesson 6.3). Player intent travels <em>up</em> as requests the server validates (RPCs, Lesson 6.4). Keep that direction straight and multiplayer architecture falls into place.</p>
+                </div>
+            </section>
+
+            <section id="ngo" class="lesson-section">
+                <h2>Netcode for GameObjects</h2>
+                <p><strong>Netcode for GameObjects (NGO)</strong> is Unity's official high-level networking library for the GameObject workflow. It handles connection, spawning networked objects, synchronising state, and remote calls, over a pluggable <strong>transport</strong> (Unity Transport by default). Install it from the Package Manager, then add a <strong><code>NetworkManager</code></strong> component to a scene object — it's the brain of the whole session.</p>
+                <p>The <code>NetworkManager</code> holds your transport, the list of spawnable network prefabs, and the connection settings. Its singleton, <code>NetworkManager.Singleton</code>, is how your code starts and queries the session. Around it you'll build with two more types you'll meet next lesson: <strong><code>NetworkObject</code></strong> (marks a GameObject as network-spawnable) and <strong><code>NetworkBehaviour</code></strong> (the base class for networked scripts, replacing <code>MonoBehaviour</code>).</p>
+                <blockquote>
+                    <strong>💡 One codebase, three roles.</strong> The same build can run as host, server, or client — which role it takes is decided at runtime by which "Start" method you call. Your networked scripts check <code>IsServer</code>/<code>IsClient</code>/<code>IsOwner</code> to branch behaviour.
+                </blockquote>
+            </section>
+
+            <section id="start" class="lesson-section">
+                <h2>Starting a Session</h2>
+                <p>With a <code>NetworkManager</code> in the scene, starting a session is one call. A tiny UI to pick a role is the classic first script:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+
+public class ConnectionMenu : MonoBehaviour
+{
+    void OnGUI()
+    {
+        // Only show the menu before a session has started.
+        if (NetworkManager.Singleton.IsClient || NetworkManager.Singleton.IsServer)
+            return;
+
+        if (GUILayout.Button("Host"))   NetworkManager.Singleton.StartHost();   // server + client
+        if (GUILayout.Button("Server")) NetworkManager.Singleton.StartServer(); // dedicated
+        if (GUILayout.Button("Client")) NetworkManager.Singleton.StartClient(); // join a host/server
+    }
+}</code></pre>
+                <ul>
+                    <li><code>StartHost()</code> — become the server <em>and</em> a local player. The go-to for testing.</li>
+                    <li><code>StartServer()</code> — become a headless dedicated server, no local player.</li>
+                    <li><code>StartClient()</code> — connect to a server at the transport's configured address.</li>
+                </ul>
+                <p>To test locally, build the game, run one instance and click <strong>Host</strong>, run another and click <strong>Client</strong> — the client connects to <code>127.0.0.1</code> by default. That two-window loop is how you'll iterate on everything in this module.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Stand up a session</h3>
+                    <p><strong>Objective:</strong> Get two instances talking.</p>
+                    <ol>
+                        <li>Install <strong>Netcode for GameObjects</strong> from the Package Manager.</li>
+                        <li>Add an empty GameObject, add a <strong>NetworkManager</strong> component, and set its transport to <strong>Unity Transport</strong>.</li>
+                        <li>Add the <code>ConnectionMenu</code> script to a scene object.</li>
+                        <li>Build the project. Run the build and click <strong>Host</strong>; run a second copy (or use the Editor) and click <strong>Client</strong>. Confirm in the console that the client connects.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>The <code>NetworkManager</code> logs connection events. If the client can't connect, check the transport's address/port match and that the host started first. Multiplayer Play Mode (a Unity package) can spin up multiple virtual players in one editor to speed this loop up.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Reason about authority</h3>
+                    <p>A player's client sends the server "I picked up the gold coin." List two things the <em>server</em> should verify before accepting it, and explain what a cheat-client could do if the server just trusted the message.</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>The server should verify the coin still exists (not already collected) and that the player is actually close enough to it (position within pickup range). If the server blindly trusted the message, a cheat-client could claim every coin instantly from across the map — classic exploit. Authority means the server checks the rules before changing shared state.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Which topology does Netcode for GameObjects use, and why is it preferred?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Client-server gives a single authoritative source of truth and a far easier security model.">A) Client-server — one authoritative source of truth, easier to secure</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Full mesh P2P is insecure and hard to scale — not NGO's model.">B) Peer-to-peer mesh — every player is equal</button>
+                            <button class="quiz-option" data-correct="false" data-hint="There's always a server (possibly a host); it's not server-less.">C) Serverless — clients share a database</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What is a "host" in Netcode?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That's a dedicated server — no local player.">A) A headless server with no local player</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A host is a listen server — one process acting as both server and a local client.">B) One process acting as both the server and a local client (listen server)</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A client only connects; it doesn't run the server.">C) Just another name for a client</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> In the authoritative-server model, who may directly change shared game state?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Only the server writes shared state; clients send requests and read the synchronised result.">A) Only the server — clients send requests and read the result</button>
+                            <button class="quiz-option" data-correct="false" data-hint="If any client could write state, cheating would be trivial.">B) Any client, at any time</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The owner sends intent, but the server still decides.">C) Whichever client owns the object writes it directly</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Networking's hard facts are <strong>latency</strong>, <strong>packet loss/order</strong>, and <strong>trust</strong> — every technique addresses one of them.</li>
+                        <li><strong>Client-server</strong> (used by NGO) beats peer-to-peer for a single source of truth and security.</li>
+                        <li>A <strong>host</strong> is server + local client in one process; a <strong>dedicated server</strong> has no local player. Your gameplay code works for both.</li>
+                        <li>The <strong>authoritative server</strong> owns shared state; clients send validated requests — this is what stops cheating.</li>
+                        <li><strong>Netcode for GameObjects</strong> centres on a <code>NetworkManager</code>; start a session with <code>StartHost</code>/<code>StartServer</code>/<code>StartClient</code>.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You can start a session; now you need <em>things in it</em>. In <strong>Lesson 6.2: NetworkObjects, Spawning &amp; Ownership</strong> we make GameObjects network-aware, spawn player objects, and untangle who owns and controls what.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🌐 The foundation is set</h3>
+                    <p>Client-server, an authoritative host, and a <code>NetworkManager</code> ready to go. Every multiplayer feature in this module rests on "server writes, clients request" — keep it in mind and the rest is mechanics.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_25.html" class="prev-lesson">← Previous: A Custom Post-Process Renderer Feature</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_27.html" class="next-lesson">Next: NetworkObjects, Spawning &amp; Ownership →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

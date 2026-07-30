@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Run a live game with Unity Gaming Services: Analytics events and funnels, Remote Config to change balancing and feature flags without a new build, Cloud Diagnostics crash and exception reporting, A/B testing, and player-data privacy and consent.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 8.3: Live-Ops — Analytics, Remote Config &amp; Crash Reporting — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 8: Testing, CI &amp; Shipping</a></li>
+            <li aria-current="page">Lesson 8.3: Live-Ops — Analytics, Remote Config &amp; Crash Reporting</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>📡 Lesson 8.3: Live-Ops — Analytics, Remote Config &amp; Crash Reporting</h1>
+                <p class="lead">Shipping used to be the finish line. For a modern game it's the starting gun. Once players are in your build, three questions dominate: <em>what are they actually doing?</em> (analytics), <em>how do I change the game without shipping a new build?</em> (remote config), and <em>what's breaking for them that never broke for me?</em> (crash reporting). This lesson tours <strong>Unity Gaming Services</strong>' live-ops toolkit — mostly conceptually, with one concrete Remote Config fetch — and closes on the privacy responsibilities that come with collecting any of this data.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain what <strong>Unity Gaming Services (UGS)</strong> offers for running a live game</li>
+                        <li>Describe how <strong>Analytics</strong> events build into funnels that reveal where players drop off</li>
+                        <li>Use <strong>Remote Config</strong> to change balancing and feature flags <em>without a new build</em>, and fetch values in code</li>
+                        <li>Understand <strong>Cloud Diagnostics</strong> crash and exception reporting from the wild</li>
+                        <li>Explain <strong>A/B testing</strong> and <strong>feature flags</strong> as ways to learn and de-risk changes</li>
+                        <li>Handle player-data <strong>privacy and consent</strong> responsibly</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 8.2 (a shipped, CI-built game is what you run live-ops <em>on</em>); async basics (Lesson 1.3)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#loop" class="toc-link">The Live-Ops Loop</a></li>
+                        <li><a href="#ugs" class="toc-link">Unity Gaming Services</a></li>
+                        <li><a href="#analytics" class="toc-link">Analytics — Events &amp; Funnels</a></li>
+                        <li><a href="#remoteconfig" class="toc-link">Remote Config</a></li>
+                        <li><a href="#abtesting" class="toc-link">A/B Testing &amp; Feature Flags</a></li>
+                        <li><a href="#crashes" class="toc-link">Crash &amp; Exception Reporting</a></li>
+                        <li><a href="#privacy" class="toc-link">Privacy &amp; Consent</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="loop" class="lesson-section">
+                <h2>The Live-Ops Loop</h2>
+                <p><strong>Live-ops</strong> (live operations) is the practice of running a game as an ongoing service after launch: watching how it's played, adjusting it, and repeating. It's a loop, and every tool in this lesson is one arc of it.</p>
+                <div class="mermaid">
+flowchart LR
+    A["🚀 Ship<br/>the build"] --&gt; B["📊 Measure<br/>analytics + crashes"]
+    B --&gt; C["🧠 Learn<br/>where players drop / break"]
+    C --&gt; D["🎛️ Configure<br/>remote config + flags"]
+    D --&gt; E["🧪 Experiment<br/>A/B test a change"]
+    E --&gt; B
+    D -.->|"occasionally"| A
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: The live-ops loop. You <strong>ship</strong> once, then cycle: <strong>measure</strong> real behaviour, <strong>learn</strong> from it, <strong>configure</strong> the game remotely, and <strong>experiment</strong> to validate changes — feeding the next measurement. Most iterations never touch the build; only occasionally do you ship a new binary.</p>
+                <p>The crucial insight is the dashed line: most adjustments loop back through <em>remote configuration</em>, not through a new build. Shipping a binary is slow — store review, player download, version fragmentation. Changing a server-side value is instant and reaches everyone at once. Live-ops is largely the art of moving as much as possible out of the build and onto the server.</p>
+            </section>
+
+            <section id="ugs" class="lesson-section">
+                <h2>Unity Gaming Services</h2>
+                <p><strong>Unity Gaming Services (UGS)</strong> is Unity's umbrella of backend, cloud-hosted services you call from the game and administer from the Unity Dashboard. It spans far more than live-ops — authentication, cloud save, matchmaking, lobbies, economy, hosted servers — but this lesson focuses on the four live-ops pillars: <strong>Analytics</strong>, <strong>Remote Config</strong>, <strong>Cloud Diagnostics</strong>, and the experimentation built on top of them.</p>
+                <p>They share plumbing. You link the project to a UGS project ID, install the relevant packages, and initialise the core services once at startup. From then on each service is a small async API:</p>
+                <pre><code class="language-csharp">using Unity.Services.Core;
+using Unity.Services.Analytics;
+using UnityEngine;
+
+public class ServicesBootstrap : MonoBehaviour
+{
+    private async void Start()
+    {
+        // One-time initialisation of Unity Gaming Services.
+        await UnityServices.InitializeAsync();
+
+        // Only start collecting analytics after the player has consented.
+        if (PlayerConsent.AnalyticsGranted)
+            AnalyticsService.Instance.StartDataCollection();
+    }
+}</code></pre>
+                <p>That <code>await UnityServices.InitializeAsync()</code> uses exactly the async/await you learned in <strong>Lesson 1.3</strong> — UGS is thoroughly asynchronous because every call is a network round-trip. Note the consent gate on the very first line of real work; we'll return to why it must be there.</p>
+            </section>
+
+            <section id="analytics" class="lesson-section">
+                <h2>Analytics — Events &amp; Funnels</h2>
+                <p>Analytics answers "what are players actually doing?" by recording <strong>events</strong> — timestamped records of things that happened, each with a name and optional parameters. Some are standard (session start, level complete); most valuable are the <strong>custom events</strong> you define for your game's own moments:</p>
+                <pre><code class="language-csharp">using Unity.Services.Analytics;
+
+// Record a custom event when a player finishes a level.
+void OnLevelComplete(int level, float seconds, int deaths)
+{
+    var evt = new CustomEvent("levelComplete")
+    {
+        { "levelIndex", level },
+        { "durationSeconds", seconds },
+        { "deaths", deaths }
+    };
+    AnalyticsService.Instance.RecordEvent(evt);
+}</code></pre>
+                <p>One event is a data point; the power comes from aggregating thousands of them. The classic aggregation is a <strong>funnel</strong>: an ordered sequence of steps, showing how many players reach each one. If <code>tutorialStart → tutorialStep2 → tutorialComplete → firstLevelStart</code> shows 100% → 92% → 61% → 58%, you've just discovered that a third of players abandon on tutorial step 2 — a precise, actionable finding you'd never get from watching a handful of playtesters.</p>
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>A <strong>funnel</strong> is an analytics view of an ordered set of events that measures <strong>drop-off</strong> at each step — the percentage of players who reach step N but not N+1. Steep drops flag friction: a confusing tutorial beat, a difficulty spike, a paywall players won't cross. Funnels turn "players seem to quit early" into "62% quit at the second boss."</p>
+                </div>
+                <p>Design your events deliberately: name them consistently, keep parameter types stable (changing a parameter from int to string mid-flight fragments your data), and record the moments that map to real decisions. Analytics you can't act on is just storage cost.</p>
+            </section>
+
+            <section id="remoteconfig" class="lesson-section">
+                <h2>Remote Config</h2>
+                <p><strong>Remote Config</strong> is the counterpart to analytics: where analytics reads player behaviour, Remote Config <em>writes</em> game parameters — from the server, live, without a new build. You define keys in the Unity Dashboard (an enemy's health, a drop rate, a feature on/off flag, an event's start date) and the game fetches their current values at runtime. Change the value in the dashboard and every player picks it up on their next fetch.</p>
+                <p>The code pattern is: fetch once (typically at startup or level load), then read typed values from the returned store.</p>
+                <pre><code class="language-csharp">using Unity.Services.Core;
+using Unity.Services.RemoteConfig;
+using UnityEngine;
+
+public struct UserAttributes { }    // targeting inputs (empty here)
+public struct AppAttributes { }
+
+public class Balancing : MonoBehaviour
+{
+    public float BossHealth { get; private set; }
+    public bool WeekendEventActive { get; private set; }
+
+    private async void Start()
+    {
+        await UnityServices.InitializeAsync();
+
+        RemoteConfigService.Instance.FetchCompleted += OnFetched;
+        await RemoteConfigService.Instance.FetchConfigsAsync(
+            new UserAttributes(), new AppAttributes());
+    }
+
+    private void OnFetched(ConfigResponse response)
+    {
+        var cfg = RemoteConfigService.Instance.appConfig;
+
+        // Read typed values, always with a sensible default fallback
+        // in case the fetch failed or the key is missing.
+        BossHealth        = cfg.GetFloat("boss_health", 500f);
+        WeekendEventActive = cfg.GetBool("weekend_event", false);
+
+        Debug.Log($"Boss health from server: {BossHealth}");
+    }
+}</code></pre>
+                <p>Two habits make this safe. First, <strong>always pass a default</strong> to every getter — the fetch can fail (no network) or a key can be absent, and the game must still play. Second, apply values at sensible boundaries, not mid-combat, so a config change doesn't yank a boss's health bar while a player is fighting it.</p>
+                <div class="card card-success">
+                    <h4>✅ Why this is transformative</h4>
+                    <p>The classic use is <strong>balancing</strong>: a weapon is overpowered, you nerf it by editing one dashboard value, and the fix reaches every player in minutes — no build, no store review, no download. Remote Config is what turns "we'll fix it in the next patch" (weeks) into "fixed" (minutes).</p>
+                </div>
+            </section>
+
+            <section id="abtesting" class="lesson-section">
+                <h2>A/B Testing &amp; Feature Flags</h2>
+                <p>Remote Config plus Analytics unlocks two powerful practices that separate guessing from knowing.</p>
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🧪 A/B testing</h4>
+                        <p>Serve different config values to different randomly-assigned player segments — group A gets a 3-life tutorial, group B gets 5 — then compare a funnel or retention metric between them. You <em>measure</em> which variant works instead of arguing about it. The winner becomes the default; the loser is retired.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🚩 Feature flags</h4>
+                        <p>A boolean Remote Config key that gates a feature. Ship the code <em>dark</em> (flag off), then flip it on for staff, then 5% of players, then everyone — and flip it off instantly if it misbehaves. Decouples <em>deploying</em> code from <em>releasing</em> a feature.</p>
+                    </div>
+                </div>
+                <p>Both rest on the same idea: the build contains the <em>capability</em>, the server decides <em>who gets it and how</em>. That's the payoff of pushing decisions out of the binary — a risky feature can launch to a sliver of your audience and be pulled without an emergency patch. A/B testing then closes the loop from Figure 1's "experiment" arc, feeding a real measurement back into the next decision.</p>
+                <blockquote>
+                    <strong>💡 Kill switches are feature flags too.</strong> Wrapping a new, risky subsystem (a live event, a matchmaking change) in a flag gives you an instant "off" button when something goes wrong in production — often the difference between a shrug and an outage.
+                </blockquote>
+            </section>
+
+            <section id="crashes" class="lesson-section">
+                <h2>Crash &amp; Exception Reporting</h2>
+                <p>Your game passed every test in Lesson 8.1 and CI shipped it green — and it will still crash for some players, on hardware and OS versions and edge cases you never saw. <strong>Cloud Diagnostics</strong> (Unity's crash and exception reporting service) captures those failures from the wild and aggregates them in the dashboard, so you learn about them from data rather than from angry reviews.</p>
+                <p>Once enabled, it automatically reports uncaught exceptions and native crashes, grouping identical stack traces so a bug hitting 10,000 players shows as one issue with a count — not 10,000 noise entries. Each report carries the stack trace, device model, OS, and app version (this is where the versioning from Lesson 8.2 pays off: a report pins to an exact build). You can also log caught issues deliberately:</p>
+                <pre><code class="language-csharp">try
+{
+    LoadPlayerSave();
+}
+catch (System.Exception e)
+{
+    // Report a handled exception with context, without crashing the game.
+    UnityEngine.Diagnostics.Utils.ForceCrash(
+        UnityEngine.Diagnostics.ForcedCrashCategory.Abort); // (illustrative)
+    Debug.LogException(e);   // logged exceptions are captured by Cloud Diagnostics
+}</code></pre>
+                <p>In practice you rarely force anything — you let unhandled exceptions flow to the reporter and use <code>Debug.LogException</code> for handled ones you still want visibility on. The workflow that matters: sort by <em>frequency</em>, fix the crash hurting the most players first, ship the fix through your CI pipeline, and watch the issue's count fall in the dashboard. That's the measure-fix-verify loop applied to stability.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ A crash report without a symbolicated build is half a clue</h4>
+                    <p>Release builds (especially IL2CPP, which you'll meet in Lesson 8.4) strip symbols, so raw crash stacks are addresses, not method names. Upload your build's symbol files to the diagnostics service as part of the pipeline so reports resolve to readable stack traces. Wire this into CI once and every future crash is legible.</p>
+                </div>
+            </section>
+
+            <section id="privacy" class="lesson-section">
+                <h2>Privacy &amp; Consent</h2>
+                <p>Everything in this lesson collects data about real people, and that carries legal and ethical obligations you cannot treat as an afterthought. Regulations such as the GDPR (Europe) and CCPA (California), plus the app stores' own rules, govern what you may collect, how you disclose it, and the rights players have over it.</p>
+                <p>The practical requirements for a shipping game:</p>
+                <ul>
+                    <li><strong>Consent before collection.</strong> Ask the player's permission before starting analytics data collection — which is why the bootstrap earlier gated <code>StartDataCollection()</code> behind a consent check rather than calling it unconditionally.</li>
+                    <li><strong>Disclosure.</strong> A clear privacy policy stating what you collect and why, linked from the game and the store listing.</li>
+                    <li><strong>Honour data-subject rights.</strong> Support opt-out and data-deletion requests; UGS Analytics exposes APIs (e.g. a data-deletion/opt-out request) to help you comply.</li>
+                    <li><strong>Extra care for minors.</strong> Games likely to be played by children carry stricter rules (COPPA and similar); when in doubt, collect less.</li>
+                </ul>
+                <div class="card card-warning">
+                    <h4>⚠️ "Collect everything, decide later" is not a strategy</h4>
+                    <p>Beyond the legal risk, over-collection erodes player trust and bloats your data. Collect the <em>minimum</em> that answers a real question, be transparent about it, and make opting out easy. Respecting players' data is part of being a professional — and this course's last technical topic is deliberately one about responsibility, not just capability.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Design a tutorial funnel</h3>
+                    <p><strong>Objective:</strong> Translate a design worry into measurable events.</p>
+                    <p>Your team suspects players quit during the tutorial but doesn't know where. List the custom analytics events you'd record to build a funnel that pinpoints the drop-off, and describe how you'd read the result.</p>
+                    <details>
+                        <summary>✅ A reasonable answer</summary>
+                        <p>Record an event at each tutorial beat: <code>tutorialStart</code>, <code>tutorialMoveTaught</code>, <code>tutorialJumpTaught</code>, <code>tutorialCombatTaught</code>, <code>tutorialComplete</code>, then <code>firstLevelStart</code>. Configure a funnel over them in that order. The step with the steepest percentage drop is where players abandon — say <code>tutorialCombatTaught</code> retains 90% but <code>tutorialComplete</code> only 55%, pointing at the combat lesson as the friction point. You'd then A/B test a simplified combat tutorial (feature-flagged via Remote Config) against the current one and compare completion rates.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Balance without a build</h3>
+                    <p>Two days after launch, one weapon is dominating and players are frustrated. Describe, using this lesson's tools, how you'd address it within an hour and without shipping an update — and what safeguard keeps the fix from breaking offline players.</p>
+                    <details>
+                        <summary>✅ Approach</summary>
+                        <p>Expose the weapon's damage as a Remote Config key (e.g. <code>plasma_rifle_damage</code>) that the game already reads via <code>GetFloat("plasma_rifle_damage", 45f)</code>. Lower the value in the Unity Dashboard; players pick up the nerf on their next config fetch, no build required. The safeguard is the <strong>default</strong> passed to <code>GetFloat</code>: if a player has no network and the fetch fails, they fall back to the sane baked-in value and the game still works. Optionally announce the change and watch an analytics metric (win-rate with that weapon) to confirm the fix landed.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What is a <em>funnel</em> in analytics?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That's a single custom event, not a funnel.">A) A single timestamped record of one player action</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A funnel is an ordered set of events measuring the drop-off — the percentage of players who reach each step — revealing where players abandon.">B) An ordered set of events measuring player drop-off at each step</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Changing values live is Remote Config; a funnel is an analytics view.">C) A server key that changes game balance remotely</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> The chief advantage of Remote Config is that it lets you…</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Crash capture is Cloud Diagnostics, a different service.">A) Automatically capture crash stack traces</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Remote Config changes balancing and feature flags server-side, reaching players without shipping a new build or waiting on store review.">B) Change balancing and feature flags without shipping a new build</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't run tests; that's the Test Framework and CI.">C) Run your test suite on every push</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why pass a default to every <code>cfg.GetFloat("key", default)</code> call?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It's not about encryption; the concern is availability of the value.">A) To encrypt the value in transit</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A fetch can fail (no network) or a key can be missing, so a sensible default keeps the game playable with baked-in values.">B) So the game still works if the fetch fails or the key is missing</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Defaults don't create analytics events; that's a separate API.">C) To automatically log an analytics event</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> When should a game call <code>AnalyticsService.Instance.StartDataCollection()</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Collecting before consent is exactly what privacy rules forbid.">A) Immediately on first launch, before anything else</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Data collection should begin only after the player has given consent, in line with GDPR/CCPA and store requirements.">B) Only after the player has granted consent to data collection</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Crash reporting is independent; analytics consent is its own gate.">C) Only when a crash occurs</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong>Live-ops</strong> is a loop: ship once, then measure → learn → configure → experiment, mostly <em>without</em> new builds.</li>
+                        <li><strong>Unity Gaming Services</strong> provides the cloud backends; you initialise once with <code>await UnityServices.InitializeAsync()</code> and call each as a small async API.</li>
+                        <li><strong>Analytics</strong> records custom <strong>events</strong> that aggregate into <strong>funnels</strong>, pinpointing where players drop off.</li>
+                        <li><strong>Remote Config</strong> changes balancing and feature flags server-side; always read values with a <strong>default fallback</strong> and apply them at safe boundaries.</li>
+                        <li><strong>A/B testing</strong> measures which variant wins; <strong>feature flags</strong> decouple deploying code from releasing a feature and give you a kill switch.</li>
+                        <li><strong>Cloud Diagnostics</strong> captures real crashes/exceptions, grouped and tied to a build version; symbolicate release builds so stacks are legible.</li>
+                        <li>All of this collects player data — get <strong>consent</strong>, disclose, honour opt-out/deletion, and collect the minimum.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have every piece of the professional pipeline — tests, CI, and live-ops. In the finale, <strong>Lesson 8.4: A Tested, CI-Built Release — and Where to Go Next</strong>, you'll combine them into one build-along release: write tests and a build script, wire a CI workflow, and walk a real release checklist from version bump to smoke test. Then we'll look back over the whole Fundamentals → Intermediate → Advanced journey and point the way to everything still ahead.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>📡 The game talks back now</h3>
+                    <p>A shipped build is no longer a black box. You can see what players do, change the game beneath their feet, and catch what breaks — responsibly. That's what running a live game means.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_36.html" class="prev-lesson">← Previous: Automated &amp; Cloud Builds (CI/CD)</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_38.html" class="next-lesson">Next: A Tested, CI-Built Release — and Where to Go Next →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

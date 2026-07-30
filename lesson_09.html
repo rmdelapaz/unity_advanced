@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Understand how Unity 6 / URP submits geometry to the GPU: what a draw call and SetPass call cost, the SRP Batcher and its per-material CBUFFERs, GPU Instancing with MaterialPropertyBlock, static batching, why legacy dynamic batching is gone, the Unity 6 GPU Resident Drawer and BatchRendererGroup, and diagnosing it all with the Frame Debugger.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 2.4: Draw Calls &amp; Batching — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 2: Performance Engineering</a></li>
+            <li aria-current="page">Lesson 2.4: Draw Calls &amp; Batching</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🎨 Lesson 2.4: Draw Calls &amp; Batching — SRP Batcher, GPU Instancing &amp; the GPU Resident Drawer</h1>
+                <p class="lead">You can write perfectly garbage-free C# and still miss your frame budget — because the bottleneck moved to the <em>other</em> side of the frame. Every object on screen has to be described to the graphics card, and each of those instructions costs CPU time on the render thread. Too many of them and the CPU spends the whole frame talking to the GPU instead of running your game. This lesson is about <strong>draw calls</strong>: what they cost, and the three batching systems — the SRP Batcher, GPU Instancing, and Unity 6's GPU Resident Drawer — that collapse thousands of them into a handful.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain what a <strong>draw call</strong> and a <strong>SetPass call</strong> are, and why SetPass calls are the expensive part</li>
+                        <li>Describe how the <strong>SRP Batcher</strong> speeds up rendering with persistent per-material GPU buffers</li>
+                        <li>Use <strong>GPU Instancing</strong> with a <code>MaterialPropertyBlock</code> to draw many copies of one mesh in a single call</li>
+                        <li>Apply <strong>static batching</strong> and understand why legacy <strong>dynamic batching</strong> is mostly gone</li>
+                        <li>Explain the Unity 6 <strong>GPU Resident Drawer</strong> and <strong>BatchRendererGroup</strong> for automatic GPU-driven rendering</li>
+                        <li>Diagnose batching with the <strong>Frame Debugger</strong> and the Rendering profiler module</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 70 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 2.1 (the Rendering profiler module) and URP basics from Unity Intermediate</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#drawcall" class="toc-link">What a Draw Call Costs</a></li>
+                        <li><a href="#batching" class="toc-link">The Idea of Batching</a></li>
+                        <li><a href="#srp" class="toc-link">The SRP Batcher</a></li>
+                        <li><a href="#instancing" class="toc-link">GPU Instancing</a></li>
+                        <li><a href="#static" class="toc-link">Static &amp; the Death of Dynamic Batching</a></li>
+                        <li><a href="#resident" class="toc-link">The GPU Resident Drawer</a></li>
+                        <li><a href="#framedebugger" class="toc-link">Diagnosing with the Frame Debugger</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="drawcall" class="lesson-section">
+                <h2>What a Draw Call Costs</h2>
+                <p>A <strong>draw call</strong> is one command from the CPU to the GPU: "draw this mesh, with this state, now." On its own a draw call is cheap. The expensive part is the <em>state change</em> that usually comes with it — telling the GPU which shader, which textures, which material properties to use before the draw. Unity bundles that state setup into what the Profiler calls a <strong>SetPass call</strong>.</p>
+                <p>Every SetPass call means the CPU on the render thread has to bind a shader, upload constants, and swap textures — real work in the graphics driver. A scene of 2,000 objects each with its own material can mean 2,000 SetPass calls, and that's how a game becomes <strong>CPU-bound on the render thread</strong> (the exact symptom you learned to spot in Lesson 2.1: main/render threads packed, GPU sitting idle).</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — draw call vs SetPass call</h4>
+                    <p>A <strong>draw call</strong> issues geometry to the GPU. A <strong>SetPass call</strong> is the more expensive event of <em>changing render state</em> (shader + material properties) before drawing. Many draw calls can share one SetPass if they use the same state. In the Rendering profiler module you watch <em>both</em> — but <strong>SetPass calls are the number that usually predicts your CPU render cost</strong>, because state changes are what stall the driver.</p>
+                </div>
+
+                <blockquote>
+                    <strong>💡 It's a CPU problem, not a GPU one.</strong> Counter-intuitively, "too many draw calls" almost never means the GPU can't draw the triangles — modern GPUs eat millions of triangles for breakfast. It means the <em>CPU</em> can't <em>describe</em> them fast enough. Batching exists to reduce the CPU's talking, not the GPU's drawing.
+                </blockquote>
+            </section>
+
+            <section id="batching" class="lesson-section">
+                <h2>The Idea of Batching</h2>
+                <p><strong>Batching</strong> is any technique that lets the CPU describe many objects with fewer, cheaper instructions — by grouping objects that share render state so the expensive state setup happens once instead of per object. Unity 6 / URP gives you three cooperating mechanisms, each suited to a different situation:</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🗃️ SRP Batcher</h4>
+                        <p>Speeds up drawing many objects that share the same <em>shader</em> (even with different material values) by keeping their material data resident on the GPU. The default, always-on workhorse.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>👥 GPU Instancing</h4>
+                        <p>Draws many copies of the <em>same mesh + material</em> in a single call, with per-copy data (position, colour) supplied as an array. Ideal for crowds, foliage, bullets.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🏔️ GPU Resident Drawer</h4>
+                        <p>Unity 6's automatic, GPU-driven pipeline built on <code>BatchRendererGroup</code>. It moves culling and draw submission onto the GPU for huge static/instanced worlds — batching you get by ticking a box.</p>
+                    </div>
+                </div>
+
+                <p>Here is the whole point of the lesson in one picture: the same eight objects submitted three ways. Watch the SetPass count collapse from left to right.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 940 470" role="img" aria-labelledby="batchTitle batchDesc">
+                        <title id="batchTitle">Unbatched vs SRP-batched vs GPU-instanced draw submission</title>
+                        <desc id="batchDesc">A three-panel comparison of how the CPU submits eight objects to the GPU. Left panel, Unbatched: eight separate arrows each labelled SetPass plus Draw run from a CPU column to a GPU column, totalling eight SetPass calls — the slowest. Middle panel, SRP Batcher: the eight objects share one shader, so a single persistent per-material buffer sits on the GPU and the CPU issues one SetPass followed by eight lightweight draw commands that just point at offsets in that buffer, totalling one SetPass and eight draws — much faster. Right panel, GPU Instancing: because all eight are the same mesh and material, the CPU issues one SetPass and one instanced draw call carrying an array of eight per-instance transforms, totalling one SetPass and one draw — the fastest.</desc>
+
+                        <rect x="0" y="0" width="940" height="470" rx="8" fill="#22262d"/>
+
+                        <!-- Panel 1: Unbatched -->
+                        <rect x="14" y="14" width="296" height="442" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="162" y="38" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ff9a90">Unbatched</text>
+                        <text x="162" y="56" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">every object: its own state change</text>
+                        <text x="52" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">CPU</text>
+                        <text x="272" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">GPU</text>
+                        <rect x="34" y="88" width="36" height="330" rx="4" fill="#33517f"/>
+                        <rect x="254" y="88" width="36" height="330" rx="4" fill="#2f4a3a"/>
+                        <g font-family="'Consolas',monospace" font-size="8.5">
+                            <!-- 8 arrows -->
+                            <line x1="70" y1="104" x2="254" y2="104" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="142" x2="254" y2="142" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="180" x2="254" y2="180" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="218" x2="254" y2="218" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="256" x2="254" y2="256" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="294" x2="254" y2="294" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="332" x2="254" y2="332" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <line x1="70" y1="370" x2="254" y2="370" stroke="#e0574c" stroke-width="2" marker-end="url(#a1)"/>
+                            <text x="162" y="100" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="138" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="176" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="214" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="252" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="290" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="328" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                            <text x="162" y="366" text-anchor="middle" fill="#ffc9c2">SetPass + Draw</text>
+                        </g>
+                        <rect x="34" y="430" width="256" height="18" rx="4" fill="#40282a"/>
+                        <text x="162" y="443" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#ff9a90">8 SetPass · 8 draws — slowest</text>
+
+                        <!-- Panel 2: SRP Batcher -->
+                        <rect x="322" y="14" width="296" height="442" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="470" y="38" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ffd79a">SRP Batcher</text>
+                        <text x="470" y="56" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">same shader → material data lives on GPU</text>
+                        <text x="360" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">CPU</text>
+                        <text x="580" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">GPU</text>
+                        <rect x="342" y="88" width="36" height="330" rx="4" fill="#33517f"/>
+                        <rect x="562" y="88" width="36" height="330" rx="4" fill="#2f4a3a"/>
+                        <!-- persistent buffer -->
+                        <rect x="500" y="120" width="98" height="120" rx="4" fill="#6a5a2a" stroke="#a0863f"/>
+                        <text x="549" y="140" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#f5e6c0">persistent</text>
+                        <text x="549" y="154" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#f5e6c0">per-material</text>
+                        <text x="549" y="168" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#f5e6c0">CBUFFER</text>
+                        <text x="549" y="190" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#cdbd90">mat0 mat1</text>
+                        <text x="549" y="204" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#cdbd90">mat2 …</text>
+                        <!-- one setpass -->
+                        <line x1="378" y1="112" x2="500" y2="140" stroke="#e0a24c" stroke-width="2.5" marker-end="url(#a2)"/>
+                        <text x="452" y="112" text-anchor="middle" font-family="'Consolas',monospace" font-size="8.5" fill="#ffd79a">1 × SetPass</text>
+                        <!-- 8 light draws -->
+                        <g>
+                            <line x1="378" y1="270" x2="562" y2="270" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="288" x2="562" y2="288" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="306" x2="562" y2="306" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="324" x2="562" y2="324" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="342" x2="562" y2="342" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="360" x2="562" y2="360" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="378" x2="562" y2="378" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                            <line x1="378" y1="396" x2="562" y2="396" stroke="#3f7d54" stroke-width="1.5" marker-end="url(#a3)"/>
+                        </g>
+                        <text x="470" y="258" text-anchor="middle" font-family="'Consolas',monospace" font-size="8.5" fill="#9be6b0">8 lightweight draws → buffer offsets</text>
+                        <rect x="342" y="430" width="256" height="18" rx="4" fill="#3a3420"/>
+                        <text x="470" y="443" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#ffd79a">1 SetPass · 8 draws — much faster</text>
+
+                        <!-- Panel 3: Instancing -->
+                        <rect x="630" y="14" width="296" height="442" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="778" y="38" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#9be6b0">GPU Instancing</text>
+                        <text x="778" y="56" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">same mesh + material → one call for all</text>
+                        <text x="668" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">CPU</text>
+                        <text x="888" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">GPU</text>
+                        <rect x="650" y="88" width="36" height="330" rx="4" fill="#33517f"/>
+                        <rect x="870" y="88" width="36" height="330" rx="4" fill="#2f4a3a"/>
+                        <!-- one setpass -->
+                        <line x1="686" y1="150" x2="870" y2="150" stroke="#e0a24c" stroke-width="2.5" marker-end="url(#a2)"/>
+                        <text x="778" y="142" text-anchor="middle" font-family="'Consolas',monospace" font-size="8.5" fill="#ffd79a">1 × SetPass</text>
+                        <!-- one instanced draw carrying array -->
+                        <rect x="700" y="210" width="120" height="120" rx="5" fill="#2f5a44" stroke="#4f9070"/>
+                        <text x="760" y="232" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#cdeed8">1 instanced draw</text>
+                        <text x="760" y="250" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="8.5" fill="#9be6b0">+ array[8] of</text>
+                        <text x="760" y="264" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#cdeed8">transforms</text>
+                        <text x="760" y="278" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#cdeed8">colors</text>
+                        <text x="760" y="300" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="8" fill="#8fbf9a">(MaterialPropertyBlock)</text>
+                        <line x1="820" y1="270" x2="870" y2="270" stroke="#3f7d54" stroke-width="3" marker-end="url(#a3)"/>
+                        <rect x="650" y="430" width="256" height="18" rx="4" fill="#22331f"/>
+                        <text x="778" y="443" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#9be6b0">1 SetPass · 1 draw — fastest</text>
+
+                        <defs>
+                            <marker id="a1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#e0574c"/></marker>
+                            <marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#e0a24c"/></marker>
+                            <marker id="a3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3f7d54"/></marker>
+                        </defs>
+                    </svg>
+                    <figcaption>Figure 1: The same eight objects, submitted three ways (reconstructed diagram). <strong style="color:#ff9a90">Unbatched</strong>: eight state changes, eight SetPass calls — the CPU render thread's nightmare. <strong style="color:#ffd79a">SRP Batcher</strong>: one shader means the material data stays resident in a persistent CBUFFER on the GPU, so one SetPass covers eight cheap draws. <strong style="color:#9be6b0">GPU Instancing</strong>: identical mesh + material collapse to a single instanced draw carrying a per-instance array. Fewer SetPass calls = less CPU render cost.</figcaption>
+                </figure>
+            </section>
+
+            <section id="srp" class="lesson-section">
+                <h2>The SRP Batcher</h2>
+                <p>The <strong>SRP Batcher</strong> is URP's default batching system, and it works differently from old-school batching. It doesn't merge meshes. Instead, it exploits a simple fact: the slow part of a SetPass call is re-uploading material data to the GPU. So the SRP Batcher keeps each material's shader constants in a <strong>persistent CBUFFER that lives on the GPU</strong> and doesn't get re-uploaded every frame. As long as consecutive objects use the <em>same shader variant</em>, the CPU skips the expensive material re-bind and just points the GPU at the right buffer offset — a much cheaper per-object cost.</p>
+                <p>The critical and often-misunderstood detail: <strong>the SRP Batcher batches by shader variant, not by material.</strong> A hundred objects using a hundred <em>different</em> materials that all share <em>one</em> shader still batch beautifully — they differ only in the values sitting in that persistent buffer. What breaks the batch is a <em>different shader</em>, because that forces a real state change.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ What makes a shader SRP-Batcher-compatible</h4>
+                    <p>For a shader to qualify, its per-material properties must be declared inside a single <code>CBUFFER</code> named <code>UnityPerMaterial</code>, and per-object properties inside <code>UnityPerDraw</code>. All URP Lit/Unlit shaders and everything Shader Graph produces are already compatible. Hand-written HLSL shaders (Module 5) must follow this layout — the Inspector's shader panel tells you "SRP Batcher: compatible" or lists why not. If your custom shader isn't compatible, it silently drops out of batching and tanks your SetPass count.</p>
+                </div>
+
+                <p>You don't <em>enable</em> the SRP Batcher per object — it's on by default in the URP asset. Your job is to <strong>not break it</strong>: keep to compatible shaders, and prefer many materials sharing few shaders over many distinct shaders. This is the single biggest rendering-performance lever in a typical URP project, and it costs you nothing but discipline.</p>
+            </section>
+
+            <section id="instancing" class="lesson-section">
+                <h2>GPU Instancing</h2>
+                <p>When you have <em>lots of the same thing</em> — 500 identical trees, a swarm of identical bullets, a field of grass — <strong>GPU Instancing</strong> beats even the SRP Batcher. It draws every copy of one mesh + one material in a <strong>single instanced draw call</strong>, handing the GPU an array of per-instance data (each copy's transform, and optionally colour or other properties) that the shader reads to place and tint each instance.</p>
+                <p>To use it in the traditional way: tick <strong>Enable GPU Instancing</strong> on the material, ensure every instance shares that mesh and material, and vary per-instance data through a <code>MaterialPropertyBlock</code> (which — importantly — does <em>not</em> create a new material instance and so doesn't break instancing). The most direct API is <code>Graphics.RenderMeshInstanced</code> / <code>DrawMeshInstanced</code>, where you supply the transforms yourself:</p>
+
+                <pre><code class="language-csharp">using UnityEngine;
+
+public class InstancedField : MonoBehaviour
+{
+    [SerializeField] Mesh _mesh;
+    [SerializeField] Material _material;   // "Enable GPU Instancing" ticked
+
+    Matrix4x4[] _matrices = new Matrix4x4[1023]; // max 1023 per batch
+    MaterialPropertyBlock _mpb;
+
+    void Start()
+    {
+        _mpb = new MaterialPropertyBlock();
+        var colors = new Vector4[1023];
+        for (int i = 0; i &lt; _matrices.Length; i++)
+        {
+            Vector3 pos = new Vector3(i % 32, 0, i / 32) * 1.5f;
+            _matrices[i] = Matrix4x4.TRS(pos, Quaternion.identity, Vector3.one);
+            colors[i] = Random.ColorHSV();
+        }
+        _mpb.SetVectorArray("_BaseColor", colors); // per-instance color, one buffer
+    }
+
+    void Update()
+    {
+        // One instanced draw for up to 1023 copies — not 1023 draw calls.
+        var rp = new RenderParams(_material) { matProps = _mpb };
+        Graphics.RenderMeshInstanced(rp, _mesh, 0, _matrices);
+    }
+}</code></pre>
+
+                <div class="card card-success">
+                    <h4>✅ SRP Batcher vs GPU Instancing — which when?</h4>
+                    <p><strong>SRP Batcher</strong> wins for many objects that share a <em>shader</em> but have <em>different meshes</em> (a whole level's props) — it's automatic and needs no identical geometry. <strong>GPU Instancing</strong> wins for many objects with the <em>same mesh and material</em> (crowds, foliage, projectiles). They don't stack on the same object — an object is drawn by one path or the other — so pick per use case: varied static scenery → lean on the SRP Batcher; thousands of clones → instancing.</p>
+                </div>
+            </section>
+
+            <section id="static" class="lesson-section">
+                <h2>Static &amp; the Death of Dynamic Batching</h2>
+                <p>Two older systems remain worth knowing:</p>
+                <ul>
+                    <li><strong>Static batching</strong> — for objects marked <em>Static</em> that never move, Unity pre-combines their meshes into a shared buffer at build/load time. They still need the same material to batch the draws, but the geometry is merged once so the CPU submits far fewer, larger draws. It trades memory (the combined mesh) for CPU time, and it's a solid win for immovable level geometry.</li>
+                    <li><strong>Legacy dynamic batching</strong> — an old system that merged small <em>moving</em> meshes on the CPU every frame. It was always limited (roughly &lt; 300 vertices, same material) and its per-frame CPU merging cost often exceeded the savings. In modern URP with the SRP Batcher and instancing doing a better job, dynamic batching is <strong>largely deprecated and off by default</strong> — you'll rarely, if ever, turn it on. Mention it only to recognize it in old projects and tutorials.</li>
+                </ul>
+
+                <blockquote>
+                    <strong>🔎 The modern hierarchy.</strong> Reach for tools in this order: keep shaders SRP-Batcher-compatible (free, broad), mark immovable geometry <em>Static</em> (cheap win), use <strong>GPU Instancing</strong> for many identical objects, and — new in Unity 6 — turn on the <strong>GPU Resident Drawer</strong> for large instanced/static worlds. Legacy dynamic batching sits at the bottom of the list, usually untouched.
+                </blockquote>
+            </section>
+
+            <section id="resident" class="lesson-section">
+                <h2>The GPU Resident Drawer</h2>
+                <p>Unity 6 introduces the <strong>GPU Resident Drawer</strong>, a GPU-driven rendering path that pushes the work of <em>culling</em> and <em>draw submission</em> off the CPU and onto the GPU. Instead of the CPU walking every renderer each frame to decide what's visible and issue draws, the GPU Resident Drawer uploads the scene's instance data once and lets the GPU cull and draw it — dramatically cutting the CPU render-thread cost for scenes with many static or instanced objects.</p>
+                <p>It's built on <strong><code>BatchRendererGroup</code></strong> (BRG), the low-level API that also powers Entities Graphics (the system that rendered the 25,600 entities you saw in the Module 4 gold lesson). BRG lets code hand the renderer big batches of instances with GPU-resident data; the GPU Resident Drawer is Unity wiring that API up <em>automatically</em> for your normal <code>MeshRenderer</code>-based scene.</p>
+                <p>You enable it in the <strong>URP Asset → Rendering → GPU Resident Drawer</strong> (set it to <em>Instanced Drawing</em>), with a companion setting for GPU occlusion culling. Objects must use SRP-Batcher-compatible shaders (there's the SRP Batcher again as the foundation) and be eligible (typically static or non-deforming). Turn it on for a dense scene and watch the Rendering module's CPU render cost fall as the GPU takes over the bookkeeping.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — GPU-driven rendering</h4>
+                    <p><strong>GPU-driven rendering</strong> flips the traditional model. Normally the CPU decides <em>what</em> to draw (culling) and issues each draw; the GPU only executes them. In a GPU-driven pipeline, the scene lives in GPU buffers and the <em>GPU itself</em> culls and generates its own draw commands. The CPU's job shrinks to "here's the world, go" — which is exactly what a CPU-bound-on-rendering game needs. The GPU Resident Drawer is Unity 6's turnkey door into this world; <code>BatchRendererGroup</code> is the door you'd open by hand.</p>
+                </div>
+            </section>
+
+            <section id="framedebugger" class="lesson-section">
+                <h2>Diagnosing with the Frame Debugger</h2>
+                <p>You can't optimize batching you can't see. Two tools tell you the truth:</p>
+                <ul>
+                    <li><strong>The Rendering profiler module</strong> (Lesson 2.1) gives you the running counts: <em>SetPass calls</em>, <em>Draw calls</em>, and <em>Batches</em>. Watch SetPass calls in particular — if it's in the thousands, you have a batching problem worth chasing.</li>
+                    <li><strong>The Frame Debugger</strong> (<strong>Window → Analysis → Frame Debugger</strong>) is the microscope. Click <em>Enable</em> and it freezes a frame and lists <em>every</em> draw event in order, letting you step through them one at a time and watch the frame build up on screen. For each event it shows what was drawn, with which shader and material, and — crucially — <strong>why the previous batch broke</strong> ("Objects have different materials," "different shader keywords," and so on).</li>
+                </ul>
+                <p>That "why the batch broke" text is gold. It turns batching from guesswork into a checklist: the Frame Debugger names the exact reason two objects didn't batch, you fix that reason (share the shader, use a property block instead of a material variant, mark it static), and you re-check the SetPass count. That loop — <em>read the count, find the break, fix the cause, re-measure</em> — is precisely the workflow you'll run in the Lesson 2.5 mini-project on the over-materialed stress scene.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Common batch-breakers to look for</h4>
+                    <ul>
+                        <li><strong>Material variants.</strong> Reading <code>renderer.material</code> (singular) at runtime <em>clones</em> the material, creating a unique instance that breaks batching. Use <code>renderer.sharedMaterial</code> or a <code>MaterialPropertyBlock</code> for per-object tweaks.</li>
+                        <li><strong>Different shaders.</strong> Even visually similar materials on different shaders can't share an SRP batch. Consolidate onto fewer shaders.</li>
+                        <li><strong>Incompatible custom shaders.</strong> A hand-written shader missing the <code>UnityPerMaterial</code> CBUFFER drops out of the SRP Batcher entirely (see Lesson 5.2).</li>
+                        <li><strong>Multi-pass / different keywords.</strong> Different shader keyword combinations are different variants and break the batch.</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Watch batches break and heal</h3>
+                    <p><strong>Objective:</strong> See the SetPass count respond to your choices, using the Frame Debugger.</p>
+                    <ol>
+                        <li>Make a scene with ~200 cubes, all using one URP Lit material. Open the Rendering profiler module and note the SetPass count — it should be low (the SRP Batcher is working).</li>
+                        <li>In a script, set each cube's colour via <code>renderer.material.color = ...</code> (the singular, cloning form). Re-check the count — it jumps, because each cube now has a unique material instance.</li>
+                        <li>Open the <strong>Frame Debugger</strong>, step through, and read the reason the batches broke.</li>
+                        <li>Switch to a <code>MaterialPropertyBlock</code> (<code>renderer.SetPropertyBlock</code>) for the colour instead. Re-check — the count drops back down.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What you should observe</summary>
+                        <p><code>renderer.material.color</code> clones the material per cube, so the SRP Batcher sees 200 different materials — but since they share a shader they may still batch on the SRP path; the bigger break comes from the cloned instances and any resulting state differences, which the Frame Debugger spells out ("Objects have different materials"). The <code>MaterialPropertyBlock</code> version varies colour <em>without</em> cloning the material, so batching holds and the SetPass count stays low. The takeaway: per-object variation belongs in a property block, never in <code>.material</code>.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Instancing a thousand clones</h3>
+                    <p>Take the same 1,000-identical-object scene and draw it two ways: once as 1,000 separate GameObjects, once via <code>Graphics.RenderMeshInstanced</code> with the code above. Compare SetPass/draw counts and CPU render time in the Profiler.</p>
+                    <details>
+                        <summary>✅ What you should observe</summary>
+                        <p>The 1,000 GameObjects submit far more draw work (even batched, there's per-object CPU overhead), while the instanced version collapses to roughly one SetPass and a handful of instanced draws (batches of up to 1,023). The Rendering module's draw-call count and the render thread's CPU time both drop sharply. This is why crowds, foliage, and projectiles use instancing — and it's the same mechanism (via BRG) that the GPU Resident Drawer and Entities Graphics use automatically at even larger scale.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why do "too many draw calls" usually hurt performance?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Modern GPUs handle enormous triangle counts easily — geometry isn't the bottleneck here.">A) The GPU can't process that many triangles</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Each SetPass/draw is CPU work on the render thread to change state and issue the command. Too many and the CPU can't describe the scene fast enough — you become CPU-bound on rendering.">B) Each one is CPU work (state changes + commands) on the render thread, so the CPU becomes the bottleneck</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Draw calls are about submission cost, not memory allocation.">C) Each draw call allocates managed memory and triggers the GC</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> The SRP Batcher batches by what?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It's more permissive than that — different materials can still batch.">A) Identical material — objects must share the exact same material</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The SRP Batcher batches by shader variant. Many different materials that share one compatible shader batch together; a different shader breaks the batch.">B) Shader variant — many materials sharing one compatible shader still batch; a different shader breaks it</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't require identical meshes — that's GPU Instancing.">C) Identical mesh — objects must share the same geometry</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> You want to draw 800 identical rocks with per-rock colour without breaking batching. What do you use?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Setting .material per rock clones the material 800 times — the opposite of what you want.">A) Set <code>renderer.material.color</code> on each rock</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! GPU Instancing (same mesh + material) with per-instance colour supplied via a MaterialPropertyBlock draws them together in one instanced call without cloning materials.">B) GPU Instancing with per-instance colour in a <code>MaterialPropertyBlock</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Legacy dynamic batching is deprecated and limited to tiny meshes — not the tool for this.">C) Enable legacy dynamic batching</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> What is the Unity 6 GPU Resident Drawer's main benefit?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't improve texture quality; it changes where culling and submission happen.">A) It increases texture resolution automatically</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Built on BatchRendererGroup, it moves culling and draw submission onto the GPU, cutting CPU render-thread cost for large static/instanced scenes.">B) It moves culling and draw submission onto the GPU, cutting CPU render cost for big scenes</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's a rendering path, not a memory/GC feature.">C) It eliminates garbage collection during rendering</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A <strong>draw call</strong> issues geometry; a <strong>SetPass call</strong> changes render state and is the expensive part. Too many SetPass calls makes you <strong>CPU-bound on the render thread</strong>.</li>
+                        <li>The <strong>SRP Batcher</strong> (default, always-on) keeps material data in a persistent GPU CBUFFER and batches by <strong>shader variant</strong> — many materials, one shader, still batch. Keep shaders compatible.</li>
+                        <li><strong>GPU Instancing</strong> draws many copies of one mesh+material in a single instanced call; vary per-instance data via a <code>MaterialPropertyBlock</code>, never by cloning <code>.material</code>.</li>
+                        <li><strong>Static batching</strong> pre-merges immovable geometry; <strong>legacy dynamic batching</strong> is deprecated and off by default.</li>
+                        <li>The Unity 6 <strong>GPU Resident Drawer</strong> (on <code>BatchRendererGroup</code>) moves culling and submission onto the GPU for large static/instanced worlds — turnkey GPU-driven rendering.</li>
+                        <li>Diagnose with the <strong>Rendering profiler module</strong> (SetPass count) and the <strong>Frame Debugger</strong>, which names exactly why each batch broke.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You've now met every pillar of performance work in this module: measuring with the Profiler, hunting memory leaks, killing garbage, and collapsing draw calls. Time to use them together on something deliberately broken. In <strong>Lesson 2.5: Profiling &amp; Fixing a Stress Scene</strong>, you'll profile a slow scene, find three concrete problems — per-frame allocations, hundreds of unbatched materials, and an expensive per-frame scene query — fix each, and re-measure with before/after numbers.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>📉 Fewer SetPass calls, faster frames</h3>
+                    <p>Share shaders, instance the clones, mark the static geometry static, and let Unity 6's GPU-driven path carry the dense scenes. The Frame Debugger tells you exactly where you're leaving performance on the table.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_08.html" class="prev-lesson">← Previous: Writing Garbage-Free Code</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_10.html" class="next-lesson">Next: Profiling &amp; Fixing a Stress Scene →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

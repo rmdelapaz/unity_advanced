@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Write a real URP shader in HLSL by hand: ShaderLab structure, the HLSL program, Attributes and Varyings structs, the vertex and fragment stages, the URP shader library, and a fresnel rim-gradient shader rendered live in Unity 6.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 5.2: Writing Shaders in HLSL — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 5: Advanced Rendering</a></li>
+            <li aria-current="page">Lesson 5.2: Writing Shaders in HLSL</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>✍️ Lesson 5.2: Writing Shaders in HLSL</h1>
+                <p class="lead">Shader Graph is a wonderful on-ramp, but every node is ultimately generating <strong>HLSL</strong> — the language the GPU actually runs. Writing it by hand gives you effects the graph can't express, tighter control, and the ability to read anyone's shader. In this lesson you'll build a complete URP shader from an empty file: ShaderLab wrapper, vertex and fragment stages, the URP library — ending in a genuine render of the result.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain the <strong>ShaderLab</strong> wrapper — <code>Shader</code>, <code>Properties</code>, <code>SubShader</code>, <code>Pass</code>, and tags</li>
+                        <li>Write an <code>HLSLPROGRAM</code> block with the right pragmas and URP includes</li>
+                        <li>Define <strong>Attributes</strong> and <strong>Varyings</strong> structs with the correct semantics</li>
+                        <li>Transform vertices to clip space and compute colour in the <strong>fragment</strong> stage</li>
+                        <li>Use URP helpers (<code>GetVertexPositionInputs</code>, <code>TransformObjectToWorldNormal</code>) and a fresnel rim</li>
+                        <li>Expose <strong>properties</strong> so the material is tweakable in the Inspector</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 75 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 5.1 (the URP frame); Intermediate Shader Graph</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Hand-Write HLSL?</a></li>
+                        <li><a href="#shaderlab" class="toc-link">The ShaderLab Wrapper</a></li>
+                        <li><a href="#pipeline" class="toc-link">Vertex → Fragment</a></li>
+                        <li><a href="#structs" class="toc-link">Attributes &amp; Varyings</a></li>
+                        <li><a href="#vert" class="toc-link">The Vertex Stage</a></li>
+                        <li><a href="#frag" class="toc-link">The Fragment Stage</a></li>
+                        <li><a href="#full" class="toc-link">The Full Shader &amp; Result</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Hand-Write HLSL?</h2>
+                <p>Shader Graph covers a huge amount of ground, and you should keep using it. But hand-written HLSL earns its place when you need to: express logic that's awkward as nodes (custom loops, bespoke lighting maths), squeeze performance, integrate a shader from a paper or another engine, or simply <em>read</em> the shaders the rest of the world writes — almost all of which are text. Think of it not as replacing Shader Graph but as removing its ceiling.</p>
+                <p>A Unity shader is written in <strong>HLSL</strong> (High-Level Shading Language), wrapped in a thin Unity-specific layer called <strong>ShaderLab</strong> that declares properties and passes. You'll recognise the structure from the Frame Debugger in Lesson 5.1 — a shader is exactly what runs when a draw call executes inside a pass.</p>
+            </section>
+
+            <section id="shaderlab" class="lesson-section">
+                <h2>The ShaderLab Wrapper</h2>
+                <p>Every <code>.shader</code> file has the same skeleton. The outer <strong>ShaderLab</strong> declares the menu name, editable <strong>Properties</strong>, and one or more <strong>SubShader</strong> → <strong>Pass</strong> blocks; the actual GPU code lives inside <code>HLSLPROGRAM … ENDHLSL</code>:</p>
+                <pre><code class="language-none">Shader "Custom/RimGradient"
+{
+    Properties            // ← what shows up in the material Inspector
+    {
+        _TopColor    ("Top Color",    Color) = (1, 0.45, 0.1, 1)
+        _BottomColor ("Bottom Color", Color) = (0.1, 0.25, 0.85, 1)
+        _RimColor    ("Rim Color",    Color) = (0.6, 0.95, 1, 1)
+        _RimPower    ("Rim Power",    Range(0.5, 8)) = 3
+    }
+    SubShader
+    {
+        // This tag tells Unity the shader targets URP.
+        Tags { "RenderType"="Opaque" "RenderPipeline"="UniversalPipeline" }
+
+        Pass
+        {
+            HLSLPROGRAM
+            // ... the HLSL goes here ...
+            ENDHLSL
+        }
+    }
+}</code></pre>
+                <p>The <code>"RenderPipeline"="UniversalPipeline"</code> tag is essential — it's how URP knows this shader is one of its own (and, incidentally, how it becomes SRP-Batcher compatible). Each <strong>Property</strong> becomes an Inspector field <em>and</em> a variable your HLSL can read.</p>
+            </section>
+
+            <section id="pipeline" class="lesson-section">
+                <h2>Vertex → Fragment</h2>
+                <p>Inside the pass, two functions run on the GPU for every object drawn. The <strong>vertex</strong> function runs once per vertex — its main job is to place the vertex in <em>clip space</em>. The <strong>fragment</strong> function runs once per covered pixel — it returns the final colour. Data flows from one to the other through a struct the GPU interpolates across the triangle:</p>
+                <div class="mermaid">
+flowchart LR
+    A["Mesh vertices<br/>(Attributes)"] --> V["vert()<br/>per vertex → clip space"]
+    V --> I["interpolated<br/>Varyings<br/>(across the triangle)"]
+    I --> F["frag()<br/>per pixel → colour"]
+    F --> O["pixel on screen"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: The programmable pipeline. You write <code>vert</code> and <code>frag</code>; the GPU runs them massively in parallel and interpolates the <code>Varyings</code> between them.</p>
+                <p>The two <code>#pragma</code> lines name those functions, and an <code>#include</code> pulls in URP's shader library so you don't reinvent the transform maths:</p>
+                <pre><code class="language-none">#pragma vertex vert
+#pragma fragment frag
+#include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"</code></pre>
+            </section>
+
+            <section id="structs" class="lesson-section">
+                <h2>Attributes &amp; Varyings</h2>
+                <p>Two structs define the data flow. <strong>Attributes</strong> is what comes <em>in</em> from the mesh (position, normal, UVs…); <strong>Varyings</strong> is what the vertex stage passes <em>out</em> to the fragment stage. Each field carries a <strong>semantic</strong> — an uppercase tag telling the GPU what the data means:</p>
+                <pre><code class="language-none">struct Attributes                       // per-vertex mesh input
+{
+    float4 positionOS : POSITION;       // object-space position
+    float3 normalOS   : NORMAL;         // object-space normal
+};
+
+struct Varyings                         // vertex → fragment (interpolated)
+{
+    float4 positionHCS : SV_POSITION;   // REQUIRED: clip-space position
+    float3 normalWS    : TEXCOORD0;     // we pass the world normal along
+    float3 positionWS  : TEXCOORD1;     // and the world position
+    float  heightOS    : TEXCOORD2;     // object-space height for the gradient
+};</code></pre>
+                <p>The suffixes (<code>OS</code>, <code>WS</code>, <code>HCS</code>) are a URP naming convention for the <em>space</em> a value is in — Object, World, Homogeneous Clip Space. Keeping spaces straight in the names is how you avoid the classic "why is my lighting wrong" bug. <code>SV_POSITION</code> on the Varyings is mandatory — it's the clip-space position the rasteriser needs.</p>
+            </section>
+
+            <section id="vert" class="lesson-section">
+                <h2>The Vertex Stage</h2>
+                <p>The vertex function converts the incoming object-space position into clip space (so the GPU knows where to draw it) and prepares the world-space data the fragment stage will need. URP's <code>GetVertexPositionInputs</code> does all the space transforms in one call:</p>
+                <pre><code class="language-none">Varyings vert (Attributes IN)
+{
+    Varyings OUT;
+
+    // One helper computes clip/world/view/etc positions for us.
+    VertexPositionInputs p = GetVertexPositionInputs(IN.positionOS.xyz);
+    OUT.positionHCS = p.positionCS;                         // clip space (required)
+    OUT.positionWS  = p.positionWS;                         // world space
+
+    OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS); // normal → world
+    OUT.heightOS = IN.positionOS.y + 0.5;                   // sphere y: -0.5..0.5 → 0..1
+    return OUT;
+}</code></pre>
+                <p>You could do the matrix multiply by hand (<code>TransformObjectToHClip(IN.positionOS.xyz)</code> is the direct route), but the <code>GetVertexPositionInputs</code> helper hands you clip <em>and</em> world position together, which we both need. <code>TransformObjectToWorldNormal</code> correctly transforms the normal (which doesn't transform the same way a position does).</p>
+            </section>
+
+            <section id="frag" class="lesson-section">
+                <h2>The Fragment Stage</h2>
+                <p>The fragment function returns the pixel colour. Ours does two things: a vertical colour gradient from the object-space height, and a <strong>fresnel rim</strong> — a glow that intensifies where the surface faces away from the camera (a staple effect that reads as a soft edge light):</p>
+                <pre><code class="language-none">float4 _TopColor;  float4 _BottomColor;  float4 _RimColor;  float _RimPower;
+
+half4 frag (Varyings IN) : SV_Target
+{
+    float3 N = normalize(IN.normalWS);
+    float3 V = normalize(GetWorldSpaceViewDir(IN.positionWS));  // to the camera
+
+    // Fresnel: bright where the surface faces away from the viewer (grazing angle).
+    float rim = pow(1.0 - saturate(dot(N, V)), _RimPower);
+
+    // Vertical gradient by object height, plus the rim glow on top.
+    float3 baseCol = lerp(_BottomColor.rgb, _TopColor.rgb, saturate(IN.heightOS));
+    float3 col     = baseCol + _RimColor.rgb * rim;
+
+    return half4(col, 1.0);
+}</code></pre>
+                <p>The fresnel trick is worth internalising: <code>dot(N, V)</code> is near 1 when you look straight at a surface and near 0 at grazing angles, so <code>1 - dot(N,V)</code> is a mask that's bright around the silhouette. Raising it to <code>_RimPower</code> tightens the rim. You'll reuse this in countless effects — force fields, holograms, highlight outlines.</p>
+            </section>
+
+            <section id="full" class="lesson-section">
+                <h2>The Full Shader &amp; Result</h2>
+                <p>Assembled and applied to a sphere, here's the shader running in Unity 6 — a <strong>real capture</strong>, not a mock-up:</p>
+
+                <figure class="render-figure">
+                    <img src="images/hlsl-shader.png" alt="A sphere shaded with a hand-written HLSL shader: an orange top fading through pink to a blue bottom, with a soft cyan rim glow around its silhouette, against a sky.">
+                    <figcaption>Figure 2: The <code>Custom/RimGradient</code> shader rendered on a sphere in Unity 6. The vertical orange-to-blue gradient comes from the fragment stage's height lerp; the cyan glow around the edge is the fresnel rim — both hand-written HLSL, no Shader Graph.</figcaption>
+                </figure>
+
+                <pre><code class="language-none">Shader "Custom/RimGradient"
+{
+    Properties
+    {
+        _TopColor    ("Top Color",    Color) = (1, 0.45, 0.1, 1)
+        _BottomColor ("Bottom Color", Color) = (0.1, 0.25, 0.85, 1)
+        _RimColor    ("Rim Color",    Color) = (0.6, 0.95, 1, 1)
+        _RimPower    ("Rim Power",    Range(0.5, 8)) = 3
+    }
+    SubShader
+    {
+        Tags { "RenderType"="Opaque" "RenderPipeline"="UniversalPipeline" }
+        Pass
+        {
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            struct Attributes { float4 positionOS : POSITION; float3 normalOS : NORMAL; };
+            struct Varyings
+            {
+                float4 positionHCS : SV_POSITION;
+                float3 normalWS    : TEXCOORD0;
+                float3 positionWS  : TEXCOORD1;
+                float  heightOS    : TEXCOORD2;
+            };
+
+            float4 _TopColor; float4 _BottomColor; float4 _RimColor; float _RimPower;
+
+            Varyings vert (Attributes IN)
+            {
+                Varyings OUT;
+                VertexPositionInputs p = GetVertexPositionInputs(IN.positionOS.xyz);
+                OUT.positionHCS = p.positionCS;
+                OUT.positionWS  = p.positionWS;
+                OUT.normalWS    = TransformObjectToWorldNormal(IN.normalOS);
+                OUT.heightOS    = IN.positionOS.y + 0.5;
+                return OUT;
+            }
+
+            half4 frag (Varyings IN) : SV_Target
+            {
+                float3 N = normalize(IN.normalWS);
+                float3 V = normalize(GetWorldSpaceViewDir(IN.positionWS));
+                float rim = pow(1.0 - saturate(dot(N, V)), _RimPower);
+                float3 baseCol = lerp(_BottomColor.rgb, _TopColor.rgb, saturate(IN.heightOS));
+                float3 col = baseCol + _RimColor.rgb * rim;
+                return half4(col, 1.0);
+            }
+            ENDHLSL
+        }
+    }
+}</code></pre>
+                <p>Create this as a <code>.shader</code> asset (right-click ▸ <strong>Create ▸ Shader ▸ Unlit Shader</strong> and replace the contents), make a Material from it, and the four Properties appear in the Inspector — drag <code>_RimPower</code> up and the glow tightens live.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ This is an unlit shader</h4>
+                    <p>Our shader computes its own colour and ignores scene lights — great for stylised or effect materials. To react to URP lighting you'd include <code>Lighting.hlsl</code>, fill a <code>SurfaceData</code>/<code>InputData</code>, and call <code>UniversalFragmentPBR</code> — more machinery than we need here. Start unlit; add lighting when the effect calls for it.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Make it yours</h3>
+                    <p><strong>Objective:</strong> Modify a working shader to build intuition.</p>
+                    <ol>
+                        <li>Create the <code>RimGradient</code> shader and material; apply it to a sphere and a capsule.</li>
+                        <li>Change <code>_RimPower</code> from 3 to 1, then to 6 — watch the rim widen then tighten. Why?</li>
+                        <li>Add a <code>_RimColor</code> multiplier so the rim pulses over time: add <code>#include</code> for time and multiply <code>rim</code> by <code>(0.5 + 0.5*sin(_Time.y*3))</code>. (<code>_Time</code> is a built-in URP variable.)</li>
+                        <li>Swap the gradient axis: use <code>IN.positionWS.y</code> instead of object height so the gradient is fixed in world space as the object rotates.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Why does higher _RimPower tighten the rim?</summary>
+                        <p><code>pow(x, p)</code> for <code>x</code> in 0–1 pushes values toward 0 as <code>p</code> grows — so only the very edge (where <code>1-dot(N,V)</code> is close to 1) stays bright, and the interior falls off faster. Lower power = broad soft glow; higher power = thin crisp rim.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Read a semantic</h3>
+                    <p>Explain, in one line each, what these do: <code>float4 positionOS : POSITION</code>, <code>float4 positionHCS : SV_POSITION</code>, <code>half4 frag(...) : SV_Target</code>.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p><code>POSITION</code> — the incoming object-space vertex position from the mesh. <code>SV_POSITION</code> — the required clip-space output the rasteriser uses to place the vertex (a "system value"). <code>SV_Target</code> — the fragment's output colour, written to the render target.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What does the vertex function's primary job return?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The vertex stage must output the clip-space position (SV_POSITION) so the GPU can rasterise the triangle.">A) The clip-space position of each vertex (<code>SV_POSITION</code>)</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Final pixel colour is the fragment stage's job.">B) The final colour of each pixel</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Lighting can be computed later; the required output is position.">C) The scene's lighting</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> The <code>Varyings</code> struct carries data from the vertex stage to the fragment stage. What happens to those values across a triangle?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="They're not constant — that would flatten the shading.">A) They stay constant for the whole triangle</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The GPU interpolates Varyings across the triangle, so each fragment gets a smoothly blended value.">B) The GPU interpolates them across the triangle per fragment</button>
+                            <button class="quiz-option" data-correct="false" data-hint="They flow vertex → fragment, and are used, not discarded.">C) They're discarded after the vertex stage</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> A fresnel term uses <code>1 - saturate(dot(N, V))</code>. Where is it brightest?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Straight-on, dot(N,V)≈1, so 1-that≈0 — dim, not bright.">A) Where the surface faces straight at the camera</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! At grazing angles dot(N,V)→0, so 1-dot→1 — the rim lights up around the silhouette.">B) At grazing angles, around the silhouette</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It depends on view/normal angle, not world height.">C) Only at the top of the object</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A Unity shader is <strong>HLSL</strong> wrapped in <strong>ShaderLab</strong> (<code>Shader</code>/<code>Properties</code>/<code>SubShader</code>/<code>Pass</code>); the URP tag makes it URP-and-SRP-Batcher aware.</li>
+                        <li>Inside <code>HLSLPROGRAM</code>: <code>#pragma vertex</code>/<code>fragment</code> name the stages, and you <code>#include</code> URP's <code>Core.hlsl</code>.</li>
+                        <li><strong>Attributes</strong> is mesh input, <strong>Varyings</strong> is vertex→fragment (interpolated); <strong>semantics</strong> (<code>POSITION</code>, <code>SV_POSITION</code>, <code>SV_Target</code>) tag each field.</li>
+                        <li>The <strong>vertex</strong> stage outputs clip space (<code>GetVertexPositionInputs</code>); the <strong>fragment</strong> stage returns colour.</li>
+                        <li>URP helpers (<code>TransformObjectToWorldNormal</code>, <code>GetWorldSpaceViewDir</code>) save you the transform maths; a <strong>fresnel rim</strong> is <code>pow(1 - dot(N,V), power)</code>.</li>
+                        <li>Every <strong>Property</strong> becomes a live Inspector control on the material.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You can write the code that runs <em>inside</em> a pass. Next you'll <em>add whole passes</em> to the frame. In <strong>Lesson 5.3: Scriptable Renderer Features &amp; Custom Passes</strong> we inject custom rendering at the <code>RenderPassEvent</code> points from Lesson 5.1, using URP 17's RenderGraph API.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>✍️ No more black box</h3>
+                    <p>Vertex places it, fragment colours it, semantics wire it together. You can now read and write the shaders that Shader Graph only hinted at — and that's a permanent upgrade.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_21.html" class="prev-lesson">← Previous: The URP Frame &amp; the Frame Debugger</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_23.html" class="next-lesson">Next: Scriptable Renderer Features &amp; Custom Passes →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

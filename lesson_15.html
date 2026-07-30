@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Module 3 mini-project: build a live ripple field of tens of thousands of points animated every frame by a Burst-compiled IJobParallelFor and drawn with GPU instancing — combining data-oriented layout, parallel jobs, and Burst end to end.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 3.5: A Burst-Compiled Parallel Field Simulation — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 3: The Job System &amp; Burst</a></li>
+            <li aria-current="page">Lesson 3.5: A Burst-Compiled Parallel Field Simulation</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🌊 Lesson 3.5: Mini-Project — A Burst-Compiled Parallel Field Simulation</h1>
+                <p class="lead">Time to put the whole module together. You'll build a living <strong>ripple field</strong>: a grid of tens of thousands of points whose heights are recomputed <em>every frame</em> by a Burst-compiled <code>IJobParallelFor</code>, then drawn in a couple of GPU-instanced calls. It's small, it's fast, and it exercises every idea in Module 3 — packed data, parallel jobs, and Burst — as one working system.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build</h2>
+                    <p>A single MonoBehaviour that:</p>
+                    <ul>
+                        <li>Lays out an <em>N×N</em> grid of points in packed <code>NativeArray</code>s (Persistent, allocated once)</li>
+                        <li>Each frame schedules a <strong><code>[BurstCompile] IJobParallelFor</code></strong> that computes every point's transform from an animated wave function</li>
+                        <li>Renders all the points with <strong><code>Graphics.RenderMeshInstanced</code></strong> — no GameObjects</li>
+                        <li>Cleans up its native memory correctly on teardown</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 90 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 3.1–3.4 (all of Module 3)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#plan" class="toc-link">The Plan</a></li>
+                        <li><a href="#step1" class="toc-link">Step 1: Setup &amp; the Grid</a></li>
+                        <li><a href="#step2" class="toc-link">Step 2: The Burst Wave Job</a></li>
+                        <li><a href="#step3" class="toc-link">Step 3: Schedule &amp; Render Each Frame</a></li>
+                        <li><a href="#step4" class="toc-link">Step 4: Cleanup</a></li>
+                        <li><a href="#full" class="toc-link">The Full Script</a></li>
+                        <li><a href="#tuning" class="toc-link">Tuning &amp; Extending</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="plan" class="lesson-section">
+                <h2>The Plan</h2>
+                <p>The per-frame loop is the same shape you learned in Lesson 3.2, now with a parallel Burst job in the middle:</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 250" role="img" aria-labelledby="planTitle planDesc">
+                        <title id="planTitle">The per-frame pipeline of the ripple field</title>
+                        <desc id="planDesc">Each Update: schedule a Burst parallel job that reads the packed grid coordinates and the current time and writes a transform matrix per point; complete the job; then render all matrices with GPU instancing.</desc>
+                        <rect x="0" y="0" width="900" height="250" rx="8" fill="#22262d"/>
+                        <defs>
+                            <marker id="fa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8fd0ff"/></marker>
+                        </defs>
+                        <rect x="24" y="90" width="180" height="70" rx="8" fill="#30363f" stroke="#454d57"/>
+                        <text x="114" y="120" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d4e6">gridXZ (packed)</text>
+                        <text x="114" y="140" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#9be6b0">NativeArray&lt;float2&gt;</text>
+
+                        <rect x="264" y="80" width="210" height="90" rx="8" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="369" y="106" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">WaveJob (Burst)</text>
+                        <text x="369" y="126" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#cfe0ff">IJobParallelFor</text>
+                        <text x="369" y="146" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9be6b0">Execute(i): TRS from</text>
+                        <text x="369" y="160" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9be6b0">sin/cos(x,z,time)</text>
+
+                        <rect x="534" y="90" width="180" height="70" rx="8" fill="#30363f" stroke="#454d57"/>
+                        <text x="624" y="120" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d4e6">matrices</text>
+                        <text x="624" y="140" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#9be6b0">NativeArray&lt;float4x4&gt;</text>
+
+                        <rect x="744" y="85" width="132" height="80" rx="8" fill="#14304a" stroke="#3a6a95"/>
+                        <text x="810" y="115" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#bcd4ee">RenderMesh-</text>
+                        <text x="810" y="132" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#bcd4ee">Instanced</text>
+                        <text x="810" y="150" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8fd0ff">GPU draw</text>
+
+                        <line x1="204" y1="125" x2="262" y2="125" stroke="#8fd0ff" stroke-width="2.2" marker-end="url(#fa)"/>
+                        <line x1="474" y1="125" x2="532" y2="125" stroke="#8fd0ff" stroke-width="2.2" marker-end="url(#fa)"/>
+                        <line x1="714" y1="125" x2="742" y2="125" stroke="#8fd0ff" stroke-width="2.2" marker-end="url(#fa)"/>
+                        <text x="369" y="40" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">Every Update()</text>
+                        <text x="369" y="60" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">Schedule(count, 64) → Complete() → draw</text>
+                    </svg>
+                    <figcaption>Figure 1: One frame. The grid coordinates and time go into a Burst parallel job; out come transform matrices; those go straight to instanced rendering.</figcaption>
+                </figure>
+                <p>No per-point GameObject, no <code>Transform</code>, no <code>Update</code> on thousands of components — just arrays flowing through a job into a draw call. This is the data-oriented shape, and it's a stone's throw from how ECS does it (which is Module 4).</p>
+            </section>
+
+            <section id="step1" class="lesson-section">
+                <h2>Step 1: Setup &amp; the Grid</h2>
+                <ol>
+                    <li>Create an empty scene. Add an empty GameObject named <code>RippleField</code>.</li>
+                    <li>Make a new script <code>RippleField.cs</code> and add it to that object.</li>
+                    <li>We'll expose a grid size, spacing, wave parameters, plus a mesh and material (assign a Cube mesh and a URP/Lit material with <em>Enable GPU Instancing</em> ticked).</li>
+                </ol>
+                <p>In <code>Start()</code> we allocate two <strong>Persistent</strong> native arrays once — the immutable grid coordinates and the per-frame output matrices — and fill the grid:</p>
+                <pre><code class="language-csharp">using Unity.Collections;
+using Unity.Mathematics;
+using UnityEngine;
+
+public class RippleField : MonoBehaviour
+{
+    [SerializeField] int gridSize = 160;      // 160 x 160 = 25,600 points
+    [SerializeField] float spacing = 1f;
+    [SerializeField] float amplitude = 4f;
+    [SerializeField] float frequency = 0.25f;
+    [SerializeField] float scale = 0.8f;
+    [SerializeField] Mesh mesh;
+    [SerializeField] Material material;
+
+    NativeArray&lt;float2&gt; gridXZ;        // packed, immutable — allocate once
+    NativeArray&lt;float4x4&gt; matrices;    // packed output — reused each frame
+    int count;
+
+    void Start()
+    {
+        count = gridSize * gridSize;
+        gridXZ   = new NativeArray&lt;float2&gt;(count, Allocator.Persistent);
+        matrices = new NativeArray&lt;float4x4&gt;(count, Allocator.Persistent);
+
+        float half = gridSize * 0.5f;
+        for (int i = 0; i &lt; count; i++)
+        {
+            int x = i % gridSize, z = i / gridSize;
+            gridXZ[i] = new float2((x - half) * spacing, (z - half) * spacing);
+        }
+    }
+    // ... job + Update + cleanup below ...
+}</code></pre>
+            </section>
+
+            <section id="step2" class="lesson-section">
+                <h2>Step 2: The Burst Wave Job</h2>
+                <p>The job is a Burst-compiled <code>IJobParallelFor</code>. It reads a point's grid coordinate and the current time, computes an animated height, and writes a full transform matrix to that point's slot — obeying the parallel-write rule (each index writes only <code>matrices[index]</code>):</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+
+[BurstCompile]
+struct WaveJob : IJobParallelFor
+{
+    [ReadOnly] public NativeArray&lt;float2&gt; gridXZ;   // shared read
+    public float time, amplitude, frequency, scale;
+    [WriteOnly] public NativeArray&lt;float4x4&gt; matrices;  // this job's output
+
+    public void Execute(int index)
+    {
+        float2 p = gridXZ[index];
+        // an animated ripple: height from two travelling sine waves
+        float height = amplitude *
+            math.sin(p.x * frequency + time) *
+            math.cos(p.y * frequency + time);
+
+        float3 pos = new float3(p.x, height, p.y);
+        matrices[index] = float4x4.TRS(pos, quaternion.identity, scale);
+    }
+}</code></pre>
+                <p>Everything in <code>Execute</code> is Burst-friendly: <code>float2</code>/<code>float3</code>/<code>float4x4</code> math and nothing managed. Burst will vectorise the sine/cosine work and inline the matrix build.</p>
+            </section>
+
+            <section id="step3" class="lesson-section">
+                <h2>Step 3: Schedule &amp; Render Each Frame</h2>
+                <p>In <code>Update()</code> we schedule the job across all cores, complete it, then draw every matrix in instanced batches. <code>Graphics.RenderMeshInstanced</code> (Unity 6) accepts a <code>NativeArray&lt;Matrix4x4&gt;</code>; since <code>float4x4</code> and <code>Matrix4x4</code> share the same 64-byte column-major layout, we <code>Reinterpret</code> the array at zero cost:</p>
+                <pre><code class="language-csharp">void Update()
+{
+    var job = new WaveJob {
+        gridXZ    = gridXZ,
+        time      = Time.time,
+        amplitude = amplitude,
+        frequency = frequency,
+        scale     = scale,
+        matrices  = matrices
+    };
+
+    // one iteration per point, batch of 64 — parallel + Burst
+    JobHandle handle = job.Schedule(count, 64);
+    handle.Complete();                       // results needed to draw this frame
+
+    // float4x4 and Matrix4x4 are layout-identical — reinterpret, no copy
+    var drawMatrices = matrices.Reinterpret&lt;Matrix4x4&gt;();
+
+    var rp = new RenderParams(material);
+    Graphics.RenderMeshInstanced(rp, mesh, 0, drawMatrices);
+}</code></pre>
+                <p>That's the entire runtime: schedule, complete, draw. The main thread stays thin because the heavy work is on the workers, and the draw is a handful of instanced submissions rather than 25,600 individual ones.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Complete before you read the output</h4>
+                    <p>We <code>Complete()</code> before reinterpreting and drawing because we need this frame's matrices <em>now</em>. If you wanted to overlap more, you could schedule in <code>Update</code> and complete in <code>LateUpdate</code> — but never hand the array to rendering while the job is still in flight (the golden rule from Lesson 3.2).</p>
+                </div>
+            </section>
+
+            <section id="step4" class="lesson-section">
+                <h2>Step 4: Cleanup</h2>
+                <p>Persistent native memory must be freed on teardown, or leak detection will (rightly) complain:</p>
+                <pre><code class="language-csharp">void OnDestroy()
+{
+    if (gridXZ.IsCreated)   gridXZ.Dispose();
+    if (matrices.IsCreated) matrices.Dispose();
+}</code></pre>
+                <p>Guarding with <code>IsCreated</code> avoids a double-dispose if the object is torn down before <code>Start</code> ran. That's the complete resource lifecycle: allocate once in <code>Start</code>, reuse every <code>Update</code>, free in <code>OnDestroy</code>.</p>
+            </section>
+
+            <section id="full" class="lesson-section">
+                <h2>The Full Script</h2>
+                <p>Everything assembled:</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+using UnityEngine;
+
+public class RippleField : MonoBehaviour
+{
+    [SerializeField] int gridSize = 160;
+    [SerializeField] float spacing = 1f, amplitude = 4f, frequency = 0.25f, scale = 0.8f;
+    [SerializeField] Mesh mesh;
+    [SerializeField] Material material;
+
+    NativeArray&lt;float2&gt; gridXZ;
+    NativeArray&lt;float4x4&gt; matrices;
+    int count;
+
+    void Start()
+    {
+        count = gridSize * gridSize;
+        gridXZ   = new NativeArray&lt;float2&gt;(count, Allocator.Persistent);
+        matrices = new NativeArray&lt;float4x4&gt;(count, Allocator.Persistent);
+        float half = gridSize * 0.5f;
+        for (int i = 0; i &lt; count; i++)
+        {
+            int x = i % gridSize, z = i / gridSize;
+            gridXZ[i] = new float2((x - half) * spacing, (z - half) * spacing);
+        }
+    }
+
+    void Update()
+    {
+        var handle = new WaveJob {
+            gridXZ = gridXZ, time = Time.time,
+            amplitude = amplitude, frequency = frequency, scale = scale,
+            matrices = matrices
+        }.Schedule(count, 64);
+        handle.Complete();
+
+        var rp = new RenderParams(material);
+        Graphics.RenderMeshInstanced(rp, mesh, 0, matrices.Reinterpret&lt;Matrix4x4&gt;());
+    }
+
+    void OnDestroy()
+    {
+        if (gridXZ.IsCreated)   gridXZ.Dispose();
+        if (matrices.IsCreated) matrices.Dispose();
+    }
+
+    [BurstCompile]
+    struct WaveJob : IJobParallelFor
+    {
+        [ReadOnly] public NativeArray&lt;float2&gt; gridXZ;
+        public float time, amplitude, frequency, scale;
+        [WriteOnly] public NativeArray&lt;float4x4&gt; matrices;
+        public void Execute(int index)
+        {
+            float2 p = gridXZ[index];
+            float height = amplitude *
+                math.sin(p.x * frequency + time) *
+                math.cos(p.y * frequency + time);
+            matrices[index] = float4x4.TRS(new float3(p.x, height, p.y),
+                                           quaternion.identity, scale);
+        }
+    }
+}</code></pre>
+                <p>Press Play and you'll see a rolling wave of 25,600 cubes running smoothly — because none of it goes through the GameObject machinery. Open the Profiler and you'll find the <code>WaveJob</code> spread across the worker lanes each frame while the main thread barely registers it.</p>
+            </section>
+
+            <section id="tuning" class="lesson-section">
+                <h2>Tuning &amp; Extending</h2>
+                <ul>
+                    <li><strong>Push the count.</strong> Raise <code>gridSize</code> to 256 (65,536 points) and watch it stay smooth. Then toggle <strong>Jobs ▸ Burst ▸ Enable Compilation</strong> off and feel the frame time jump — that's Burst earning its keep.</li>
+                    <li><strong>Batch count.</strong> Try 16, 64, 256 and profile. The sweet spot balances scheduling overhead against load balancing.</li>
+                    <li><strong>Colour it.</strong> Pass a per-instance colour via a <code>MaterialPropertyBlock</code> / instanced property driven by height for the heat-map look.</li>
+                    <li><strong>Overlap frames.</strong> Move <code>Complete()</code> to <code>LateUpdate</code> and do other work between schedule and complete.</li>
+                </ul>
+
+                <div class="card card-success">
+                    <h4>✅ What you built — and where it goes</h4>
+                    <p>You animated tens of thousands of points every frame with a Burst parallel job and drew them without a single GameObject. That's the full Module 3 toolkit working as one system. In <a href="lesson_16.html">Module 4</a> you'll meet the framework that makes this pattern the <em>default</em> — ECS stores your data as these packed arrays automatically, runs systems as Burst jobs, and renders through Entities Graphics. The 25,600-entity render that opens Lesson 4.1 is this very idea, promoted to real entities.</p>
+                </div>
+            </section>
+
+            <section id="quiz" class="lesson-section">
+                <h2>Quick Quiz</h2>
+                <div class="card quiz-container">
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why are the grid and matrix arrays allocated with <code>Allocator.Persistent</code> in <code>Start</code> rather than in <code>Update</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! They live for the object's whole lifetime and are reused every frame, so you allocate once and dispose in OnDestroy — allocating each frame would be needless malloc/free churn.">A) They live the whole lifetime and are reused each frame — allocate once, dispose on teardown</button>
+                            <button class="quiz-option" data-correct="false" data-hint="TempJob is for a few frames of job data, not a persistent reused buffer.">B) Because TempJob buffers are faster to reuse</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Persistent is the slowest to allocate — that's exactly why you don't do it per frame.">C) Because Persistent is fastest to allocate every frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why can you pass <code>matrices.Reinterpret&lt;Matrix4x4&gt;()</code> to the renderer at no cost?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! float4x4 and Matrix4x4 share the same 64-byte column-major layout, so reinterpreting the array is a view, not a copy.">A) <code>float4x4</code> and <code>Matrix4x4</code> have identical memory layout, so it's a view, not a copy</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't convert element by element — that would cost.">B) It converts each element on the CPU quickly</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Reinterpret doesn't move anything to the GPU by itself.">C) It uploads the data to the GPU</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why does <code>Update</code> call <code>handle.Complete()</code> before rendering?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Completing doesn't schedule anything; it waits.">A) To schedule the job onto the workers</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The matrices are needed this frame to draw, and you must never hand a job's data to rendering while the job is still in flight (the golden rule).">B) The matrices are needed to draw this frame, and you can't read them while the job is still running</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Disposal happens in OnDestroy, not here.">C) To dispose the native arrays</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Packed <code>NativeArray</code>s + a <code>[BurstCompile] IJobParallelFor</code> + instanced rendering = tens of thousands of animated points, cheaply.</li>
+                        <li>Allocate <strong>Persistent</strong> buffers once in <code>Start</code>, reuse them every <code>Update</code>, free them in <code>OnDestroy</code>.</li>
+                        <li>Schedule across cores, <code>Complete()</code> before reading, then draw with <code>Graphics.RenderMeshInstanced</code>.</li>
+                        <li><code>float4x4</code> and <code>Matrix4x4</code> are layout-identical — <code>Reinterpret</code> to hand job output to the renderer with no copy.</li>
+                        <li>The whole thing avoids the GameObject machinery — the same reason ECS scales, and your bridge into Module 4.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You've built a data-oriented simulation by hand. In <strong>Module 4</strong> we hand that pattern to a framework: the <strong>Entity Component System</strong>. Lesson 4.1 already introduced the mindset and showed the payoff render — now you'll build it, starting with real components and archetypes.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🌊 Module 3, complete</h3>
+                    <p>Data laid out for the cache, work spread across cores, code compiled to native SIMD. That's high-performance Unity — and it's the foundation the DOTS/ECS module is built on.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_14.html" class="prev-lesson">← Previous: Parallel Jobs &amp; Burst Compilation</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_16.html" class="next-lesson">Next: The ECS Mindset →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

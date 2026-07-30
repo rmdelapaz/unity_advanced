@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Module 2 mini-project: profile a deliberately slow Unity 6 scene, diagnose three concrete problems — per-frame allocations in Update, hundreds of unbatched materials, and an expensive FindObjectsByType each frame — fix each one, and re-measure the frame with real before/after numbers.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 2.5: Profiling &amp; Fixing a Stress Scene — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 2: Performance Engineering</a></li>
+            <li aria-current="page">Lesson 2.5: Profiling &amp; Fixing a Stress Scene</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🛠️ Lesson 2.5: Mini-Project — Profiling &amp; Fixing a Stress Scene</h1>
+                <p class="lead">Four lessons of theory now meet one deliberately broken scene. You'll build a small "arena" that runs at a miserable frame rate on purpose, then do exactly what a professional does on a real project: open the Profiler, follow the evidence to three specific culprits — per-frame allocations, hundreds of unbatched materials, and an expensive scene query every frame — fix each one, and prove the fix with before/after numbers. By the end you'll have run the complete performance loop end to end, and turned a 40&nbsp;ms frame into a smooth one.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build &amp; Learn</h2>
+                    <p>In this build-along you will:</p>
+                    <ul>
+                        <li>Assemble a <strong>stress scene</strong> with three baked-in performance bugs, one per earlier lesson</li>
+                        <li>Profile it and read the spike in the <strong>CPU Timeline</strong> and <strong>Hierarchy</strong> (Lesson 2.1)</li>
+                        <li>Fix a per-frame <strong>allocation</strong> hot path (Lesson 2.3) and confirm GC Alloc drops to 0&nbsp;B</li>
+                        <li>Fix an expensive <strong><code>FindObjectsByType</code></strong> called every frame (Lessons 2.1 &amp; 2.3)</li>
+                        <li>Fix <strong>hundreds of unbatched materials</strong> and watch the SetPass count collapse (Lesson 2.4)</li>
+                        <li>Re-measure with the <strong>Profile Analyzer</strong> and report a real before/after</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 90 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 2.1–2.4 (this project uses all four)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#plan" class="toc-link">The Plan &amp; the Baseline</a></li>
+                        <li><a href="#scene" class="toc-link">Step 1: Build the Stress Scene</a></li>
+                        <li><a href="#profile" class="toc-link">Step 2: Profile &amp; Read the Spike</a></li>
+                        <li><a href="#fix1" class="toc-link">Step 3: Fix the Allocations</a></li>
+                        <li><a href="#fix2" class="toc-link">Step 4: Fix the Scene Query</a></li>
+                        <li><a href="#fix3" class="toc-link">Step 5: Fix the Unbatched Materials</a></li>
+                        <li><a href="#remeasure" class="toc-link">Step 6: Re-measure Before/After</a></li>
+                        <li><a href="#exercise" class="toc-link">Extend It</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="plan" class="lesson-section">
+                <h2>The Plan &amp; the Baseline</h2>
+                <p>The golden rule from Lesson 2.1 governs everything here: <strong>measure, then fix, then measure again.</strong> We won't "optimize" anything until the Profiler points at it, and we won't declare a fix successful until the numbers move. The scene we build has exactly three problems, each drawn from a previous lesson:</p>
+                <ol>
+                    <li><strong>Per-frame allocations</strong> — a manager whose <code>Update</code> builds strings and lists every frame (Lesson 2.3).</li>
+                    <li><strong>An expensive per-frame query</strong> — each agent calls <code>FindObjectsByType&lt;Agent&gt;()</code> every frame to find its neighbours (Lessons 2.1 &amp; 2.3).</li>
+                    <li><strong>Hundreds of unbatched materials</strong> — every agent clones its material to tint it, exploding the SetPass count (Lesson 2.4).</li>
+                </ol>
+                <p>Together these will drag a few hundred agents down to a stuttering ~25&nbsp;FPS. Here's the target of the whole exercise: the Profiler CPU Timeline <em>before</em> (a tall, ugly frame) and <em>after</em> (a flat one under budget).</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 920 470" role="img" aria-labelledby="baTitle baDesc">
+                        <title id="baTitle">Profiler CPU timeline before and after the fixes</title>
+                        <desc id="baDesc">Two stacked Profiler CPU timelines for the same scene. The top one, labelled Before at 41 milliseconds per frame, shows a main-thread lane packed almost end to end with three large coloured blocks: a wide red block labelled FindObjectsByType times 300, a blue block labelled string and list allocations with a GC spike marker, and a green Rendering block labelled 900 SetPass calls. A dashed line marks the 16.7 millisecond sixty-frames-per-second budget, far to the left of where the frame ends, showing the frame is well over budget. The bottom timeline, labelled After at 9 milliseconds per frame, shows a much shorter main-thread lane with three small blocks: cached neighbour list, zero-B pooled update, and Rendering at 40 SetPass calls, all finishing comfortably to the left of the 16.7 millisecond budget line.</desc>
+
+                        <rect x="0" y="0" width="920" height="470" rx="8" fill="#22262d"/>
+
+                        <!-- BEFORE -->
+                        <rect x="14" y="16" width="892" height="200" rx="6" fill="#1b1f25" stroke="#3a4149"/>
+                        <text x="28" y="40" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ff9a90">BEFORE · 41.0 ms/frame · ~24 FPS</text>
+                        <!-- budget line -->
+                        <line x1="352" y1="24" x2="352" y2="208" stroke="#e0a24c" stroke-width="1.5" stroke-dasharray="5 4"/>
+                        <text x="358" y="60" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e0a24c">16.7 ms budget →</text>
+                        <text x="358" y="74" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">(frame ends way past here)</text>
+                        <!-- lane label -->
+                        <text x="28" y="112" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">Main Thread</text>
+                        <!-- packed blocks -->
+                        <rect x="120" y="92" width="360" height="40" rx="3" fill="#b0483f"/>
+                        <text x="300" y="116" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#ffe3df">FindObjectsByType&lt;Agent&gt; × 300</text>
+                        <rect x="484" y="92" width="220" height="40" rx="3" fill="#3a5c9a"/>
+                        <text x="594" y="112" text-anchor="middle" font-family="'Consolas',monospace" font-size="9" fill="#dfe8ff">string + List alloc</text>
+                        <text x="594" y="126" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#ffd0cc">▲ GC spike</text>
+                        <rect x="708" y="92" width="176" height="40" rx="3" fill="#3f7d54"/>
+                        <text x="796" y="112" text-anchor="middle" font-family="'Consolas',monospace" font-size="9" fill="#e6f0e6">Rendering</text>
+                        <text x="796" y="126" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#cfe8d6">900 SetPass</text>
+                        <!-- axis -->
+                        <line x1="120" y1="150" x2="884" y2="150" stroke="#454d57"/>
+                        <text x="120" y="166" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">0</text>
+                        <text x="884" y="166" text-anchor="end" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">41 ms</text>
+                        <text x="300" y="192" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">three problems fill the whole frame</text>
+
+                        <!-- AFTER -->
+                        <rect x="14" y="232" width="892" height="200" rx="6" fill="#1b1f25" stroke="#3a4149"/>
+                        <text x="28" y="256" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#9be6b0">AFTER · 9.0 ms/frame · ~110 FPS</text>
+                        <line x1="352" y1="240" x2="352" y2="424" stroke="#e0a24c" stroke-width="1.5" stroke-dasharray="5 4"/>
+                        <text x="358" y="276" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e0a24c">16.7 ms budget</text>
+                        <text x="28" y="328" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9fb3d0">Main Thread</text>
+                        <!-- small blocks, all left of budget -->
+                        <rect x="120" y="308" width="70" height="40" rx="3" fill="#b0483f" opacity="0.7"/>
+                        <text x="155" y="332" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#ffe3df">cached list</text>
+                        <rect x="194" y="308" width="64" height="40" rx="3" fill="#3a5c9a" opacity="0.7"/>
+                        <text x="226" y="328" text-anchor="middle" font-family="'Consolas',monospace" font-size="7.5" fill="#dfe8ff">0 B update</text>
+                        <rect x="262" y="308" width="70" height="40" rx="3" fill="#3f7d54" opacity="0.85"/>
+                        <text x="297" y="326" text-anchor="middle" font-family="'Consolas',monospace" font-size="8" fill="#e6f0e6">Render</text>
+                        <text x="297" y="340" text-anchor="middle" font-family="'Consolas',monospace" font-size="7" fill="#cfe8d6">40 SetPass</text>
+                        <line x1="120" y1="366" x2="884" y2="366" stroke="#454d57"/>
+                        <text x="120" y="382" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">0</text>
+                        <text x="884" y="382" text-anchor="end" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">41 ms (same scale)</text>
+                        <text x="500" y="408" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">same scene, same scale — the frame now finishes well under budget</text>
+                    </svg>
+                    <figcaption>Figure 1: The goal, as a before/after Profiler CPU Timeline (reconstructed diagram, same time scale on both). <strong style="color:#ff9a90">Before</strong>: three problems — 300 per-frame scene queries, string/list allocations with a GC spike, and 900 SetPass calls — fill a 41&nbsp;ms frame. <strong style="color:#9be6b0">After</strong>: a cached neighbour list, a zero-allocation update, and 40 SetPass calls finish in 9&nbsp;ms, comfortably inside the 16.7&nbsp;ms budget. The numbers are illustrative of the <em>shape</em> of the win; your exact values depend on your machine and agent count.</figcaption>
+                </figure>
+            </section>
+
+            <section id="scene" class="lesson-section">
+                <h2>Step 1: Build the Stress Scene</h2>
+                <p>Create a fresh URP scene. Add an empty <code>ArenaSpawner</code> GameObject and give it this script, which spawns a few hundred cube "agents." Each agent will (deliberately) misbehave in the next script.</p>
+
+                <pre><code class="language-csharp">using UnityEngine;
+
+public class ArenaSpawner : MonoBehaviour
+{
+    [SerializeField] Agent _agentPrefab;   // a cube with the Agent script + a Renderer
+    [SerializeField] int _count = 300;
+    [SerializeField] float _area = 40f;
+
+    void Start()
+    {
+        for (int i = 0; i &lt; _count; i++)
+        {
+            Vector3 pos = new Vector3(
+                Random.Range(-_area, _area), 0.5f, Random.Range(-_area, _area));
+            Instantiate(_agentPrefab, pos, Quaternion.identity);
+        }
+    }
+}</code></pre>
+
+                <p>Now the deliberately-slow <code>Agent</code>. Every line of its <code>Update</code> commits one of our three sins: it re-scans the whole scene for neighbours, it allocates strings/lists, and it clones its material to tint itself. This is the "before."</p>
+
+                <pre><code class="language-csharp">using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+
+public class Agent : MonoBehaviour
+{
+    Renderer _renderer;
+
+    void Awake() { _renderer = GetComponent&lt;Renderer&gt;(); }
+
+    void Update()
+    {
+        // ❌ PROBLEM 2: scan the ENTIRE scene every frame, for every agent.
+        //    300 agents × FindObjectsByType = 300 full-scene scans per frame.
+        Agent[] all = Object.FindObjectsByType&lt;Agent&gt;(FindObjectsSortMode.None);
+
+        // ❌ PROBLEM 1: LINQ + ToList + a captured closure allocate every frame.
+        Vector3 self = transform.position;
+        List&lt;Agent&gt; neighbours = all
+            .Where(a =&gt; a != this &amp;&amp;
+                        Vector3.Distance(a.transform.position, self) &lt; 6f)
+            .ToList();
+
+        // ❌ PROBLEM 1 (again): string built every frame for a debug label.
+        string label = "Agent " + name + " sees " + neighbours.Count + " neighbours";
+        gameObject.name = label;   // touching name each frame is itself wasteful
+
+        // ❌ PROBLEM 3: '.material' CLONES the material → a unique instance per
+        //    agent → the SRP Batcher can't keep them together → SetPass explodes.
+        float t = Mathf.Clamp01(neighbours.Count / 8f);
+        _renderer.material.color = Color.Lerp(Color.cyan, Color.red, t);
+    }
+}</code></pre>
+
+                <p>Wire a cube prefab with the <code>Agent</code> script into the spawner, press Play, and you should see the frame rate crater. Resist the urge to fix anything yet — first we prove what's wrong.</p>
+            </section>
+
+            <section id="profile" class="lesson-section">
+                <h2>Step 2: Profile &amp; Read the Spike</h2>
+                <p>Open <strong>Window → Analysis → Profiler</strong>, enter Play mode, and let it capture a few seconds. Then:</p>
+                <ol>
+                    <li>Click a representative frame in the <strong>CPU Usage</strong> module chart to freeze it. Note the total frame time (well over 16.7&nbsp;ms).</li>
+                    <li>In <strong>Timeline</strong>, find the fat blocks on the Main Thread — you'll see a large slab of script time.</li>
+                    <li>Switch to <strong>Hierarchy</strong> and sort by <strong>Self ms</strong>. <code>Agent.Update</code> and, underneath it, <code>FindObjectsByType</code> should dominate.</li>
+                    <li>Now sort by <strong>GC Alloc</strong>. <code>Agent.Update</code> shows a large per-frame allocation (the LINQ chain + strings).</li>
+                    <li>Add the <strong>Rendering</strong> module and read the <strong>SetPass calls</strong> count — it'll be in the high hundreds because every agent has a cloned material.</li>
+                </ol>
+                <p>You now have three pieces of evidence, each pointing at one problem. This is the whole discipline: the Profiler <em>named</em> the culprits, so every fix below is targeted, not a guess.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Write the numbers down</h4>
+                    <p>Before touching code, record four baseline numbers: <strong>frame time (ms)</strong>, <strong>Agent.Update Self ms</strong>, <strong>GC Alloc per frame</strong>, and <strong>SetPass calls</strong>. Without a written baseline you can't prove a fix worked — and "I think it feels smoother" is not engineering. This is exactly what the Profile Analyzer automates in Step 6.</p>
+                </div>
+            </section>
+
+            <section id="fix1" class="lesson-section">
+                <h2>Step 3: Fix the Allocations</h2>
+                <p>Tackle the garbage first (Lesson 2.3). Two allocation sources live in <code>Update</code>: the LINQ <code>Where…ToList</code>, and the per-frame string. We replace LINQ with a reused list and a plain loop, and we drop the pointless per-frame string entirely.</p>
+
+                <pre><code class="language-csharp">// Reused across frames instead of a fresh List every frame.
+readonly List&lt;Agent&gt; _neighbours = new List&lt;Agent&gt;(32);
+
+void UpdateNeighbours(Agent[] all)
+{
+    _neighbours.Clear();               // reuse the same backing array
+    Vector3 self = transform.position;
+    for (int i = 0; i &lt; all.Length; i++)
+    {
+        Agent a = all[i];
+        if (a == this) continue;
+        // sqrMagnitude avoids the sqrt in Distance and the closure in Where.
+        if ((a.transform.position - self).sqrMagnitude &lt; 36f) // 6 * 6
+            _neighbours.Add(a);
+    }
+    // No per-frame string. If you need a label, update it only on change,
+    // or show it in a dedicated debug UI — not by rebuilding gameObject.name.
+}</code></pre>
+
+                <p>Re-profile just this change and the <strong>GC Alloc</strong> for <code>Agent.Update</code> drops toward 0&nbsp;B (the scene query still allocates its array — that's the next fix). The LINQ/iterator/closure/string bytes are gone, and the incremental GC has far less to do.</p>
+            </section>
+
+            <section id="fix2" class="lesson-section">
+                <h2>Step 4: Fix the Scene Query</h2>
+                <p>The worst CPU offender is <code>FindObjectsByType</code> running once <em>per agent, per frame</em> — 300 agents means 300 full-scene scans every frame, each also allocating an array. The fix is a <strong>registry</strong>: agents add themselves to one shared static list on enable and remove themselves on disable (Lessons 2.1 &amp; 2.3). The whole scene is then known without any scanning.</p>
+
+                <pre><code class="language-csharp">using System.Collections.Generic;
+using UnityEngine;
+
+public class Agent : MonoBehaviour
+{
+    // ONE shared list of all live agents — no scanning, no allocation.
+    public static readonly List&lt;Agent&gt; All = new List&lt;Agent&gt;(512);
+
+    readonly List&lt;Agent&gt; _neighbours = new List&lt;Agent&gt;(32);
+    Renderer _renderer;
+    MaterialPropertyBlock _mpb;        // set up in Step 5
+
+    void Awake()
+    {
+        _renderer = GetComponent&lt;Renderer&gt;();
+        _mpb = new MaterialPropertyBlock();
+    }
+
+    // Register / unregister — mirror the += / -= discipline from Lesson 2.2.
+    void OnEnable()  { All.Add(this); }
+    void OnDisable() { All.Remove(this); }
+
+    void Update()
+    {
+        _neighbours.Clear();
+        Vector3 self = transform.position;
+        // Iterate the shared registry — no FindObjectsByType, no allocation.
+        for (int i = 0; i &lt; All.Count; i++)
+        {
+            Agent a = All[i];
+            if (a == this) continue;
+            if ((a.transform.position - self).sqrMagnitude &lt; 36f)
+                _neighbours.Add(a);
+        }
+
+        ApplyTint(_neighbours.Count);  // Step 5
+    }
+}</code></pre>
+
+                <p>Re-profile: <code>Agent.Update</code>'s Self&nbsp;ms collapses because the 300 full-scene scans are gone, replaced by iterating one in-memory list. This is usually the single biggest win in the whole project — a classic "never search the scene every frame" fix.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Still O(n²) — but a cheap n²</h4>
+                    <p>Each agent still loops over every other agent, so neighbour-finding is O(n²). We removed the <em>catastrophic</em> cost (full-scene reflection scans + allocations), which is enough to hit budget here. If you needed to scale to thousands, the next step would be a spatial partition (a uniform grid or quadtree) so each agent only checks nearby cells — or moving the whole thing into a Burst job (Module 3). Know when "good enough" is good enough: the Profiler says we're now under budget, so we stop.</p>
+                </div>
+            </section>
+
+            <section id="fix3" class="lesson-section">
+                <h2>Step 5: Fix the Unbatched Materials</h2>
+                <p>The last problem is rendering (Lesson 2.4): <code>_renderer.material.color = …</code> reads the singular <code>.material</code>, which <strong>clones</strong> the material into a unique instance for every agent. 300 unique materials means the SRP Batcher can't keep them together and the SetPass count explodes. The fix is a <code>MaterialPropertyBlock</code> — per-object colour with <em>no</em> material cloning, so all agents keep sharing one material and one shader:</p>
+
+                <pre><code class="language-csharp">static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
+
+void ApplyTint(int neighbourCount)
+{
+    float t = Mathf.Clamp01(neighbourCount / 8f);
+    Color c = Color.Lerp(Color.cyan, Color.red, t);
+
+    // Write colour into a property block — does NOT clone the material,
+    // so every agent still shares one material/shader and batches together.
+    _renderer.GetPropertyBlock(_mpb);
+    _mpb.SetColor(BaseColorId, c);
+    _renderer.SetPropertyBlock(_mpb);
+}</code></pre>
+
+                <p>Open the <strong>Frame Debugger</strong> (Lesson 2.4) before and after this change: beforehand it reports batches breaking on "different materials"; afterward the agents draw in far fewer batches. The <strong>SetPass calls</strong> count in the Rendering module drops from the high hundreds to a few dozen. If your agents all share one mesh too, you could go further with GPU Instancing — but the property-block fix alone restores SRP batching and is enough here.</p>
+
+                <blockquote>
+                    <strong>🔎 One rule, remembered.</strong> Runtime per-object visual variation belongs in a <code>MaterialPropertyBlock</code>, never in <code>renderer.material</code>. That singular property is a material-cloning trap that silently multiplies your materials and wrecks batching — one of the most common rendering-performance bugs in real projects.
+                </blockquote>
+            </section>
+
+            <section id="remeasure" class="lesson-section">
+                <h2>Step 6: Re-measure Before/After</h2>
+                <p>Now prove it. Capture a fresh profile of the fixed scene and compare all four numbers against the baseline you wrote down in Step 2:</p>
+
+                <div class="card card-accent">
+                    <h4>📊 A representative result (300 agents)</h4>
+                    <ul>
+                        <li><strong>Frame time:</strong> ~41&nbsp;ms → ~9&nbsp;ms (over budget → comfortably under)</li>
+                        <li><strong>Agent.Update Self ms:</strong> dominated by 300 scene scans → a plain list iteration, a fraction of the cost</li>
+                        <li><strong>GC Alloc / frame:</strong> kilobytes of LINQ + strings + arrays → ~0&nbsp;B</li>
+                        <li><strong>SetPass calls:</strong> ~900 → ~40</li>
+                    </ul>
+                    <p>Your exact numbers depend on hardware and agent count, but the <em>shape</em> — this is Figure 1 made real — should match: a frame that no longer fills its budget, flat GC, and a low SetPass count.</p>
+                </div>
+
+                <p>For a rigorous before/after, use the <strong>Profile Analyzer</strong> package (Lesson 2.1). Capture a range of frames <em>before</em> your fixes and save it; capture another range <em>after</em>; load both into the Analyzer's <strong>Compare</strong> view. It diffs every marker and shows exactly which ones got faster and by how much — turning "it feels better" into "Agent.Update median dropped from 0.11&nbsp;ms to 0.004&nbsp;ms." That is the deliverable a professional performance pass produces: not a vibe, a measured delta.</p>
+
+                <div class="card card-success">
+                    <h4>✅ What you just did — the whole loop</h4>
+                    <p>You <strong>measured</strong> (Profiler CPU/Memory/Rendering), <strong>diagnosed</strong> three specific causes from evidence, <strong>fixed</strong> each with the right technique (garbage-free code, a registry instead of scene scans, a property block instead of cloned materials), and <strong>re-measured</strong> to prove it. That loop — not any single trick — is the transferable skill of this entire module.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Extend It</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Challenge 1: Scale to 2,000 agents</h3>
+                    <p>Crank the spawner to 2,000 and profile again. The O(n²) neighbour loop (Step 4's warning) will now dominate. Add a simple <strong>uniform grid</strong>: divide the arena into cells, put each agent in its cell each frame, and check only the agent's own cell plus the eight around it. Re-profile and compare <code>Agent.Update</code> Self&nbsp;ms before and after the grid.</p>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Key a <code>Dictionary&lt;Vector2Int, List&lt;Agent&gt;&gt;</code> (pool the inner lists with <code>ListPool&lt;T&gt;</code> from Lesson 2.3 to stay garbage-free) by <code>(floor(x/cellSize), floor(z/cellSize))</code>. Rebuild it once per frame in a single manager, then each agent reads only its 3×3 neighbourhood. You've converted O(n²) into roughly O(n), and the Profiler will show a flat line where the quadratic curve used to be. For the ultimate version, this is precisely the kind of uniform, data-parallel work that Module 3's Job System and Burst were built for.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Challenge 2: Instance the agents</h3>
+                    <p>All agents share one cube mesh and (now) one material. Convert the rendering to true <strong>GPU Instancing</strong> with <code>Graphics.RenderMeshInstanced</code> (Lesson 2.4): stop using per-agent <code>MeshRenderer</code>s, gather the transforms and colours into arrays each frame, and issue instanced draws. Compare draw-call count and CPU render time.</p>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Have the manager collect a <code>Matrix4x4[]</code> of agent transforms and a per-instance colour array into a <code>MaterialPropertyBlock</code>, then call <code>Graphics.RenderMeshInstanced</code> in batches of up to 1,023. The SetPass and draw counts drop to a handful regardless of agent count — the same mechanism (via <code>BatchRendererGroup</code>) that powers the GPU Resident Drawer and the ECS entity fields you'll meet in Module 4.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Before writing any fix in this project, what did we do first?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Rewriting before measuring is exactly the guess-driven approach this module argues against.">A) Rewrote the slowest-looking method from memory</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! We profiled, recorded baseline numbers (frame time, Self ms, GC Alloc, SetPass), and let the evidence name the three culprits before changing a line.">B) Profiled the scene and wrote down baseline numbers so each fix could be proven</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Turning on batching helps, but the discipline is to measure first and target the real causes.">C) Enabled every batching option at once</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why was calling <code>FindObjectsByType&lt;Agent&gt;()</code> in each agent's <code>Update</code> so damaging?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It's not about the GPU at all — this is CPU and allocation cost.">A) It overloads the GPU with draw calls</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! With 300 agents it ran 300 full-scene scans per frame, each also allocating an array — huge CPU cost plus garbage. A shared registry replaces all of it.">B) It ran a full-scene scan per agent per frame — 300 scans/frame — each allocating an array</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It returns correct results; the problem is how expensive getting them this way is.">C) It returns the wrong agents</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Setting <code>_renderer.material.color</code> per agent exploded the SetPass count. Why?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The singular .material clones the material into a unique instance per agent, so the SRP Batcher can no longer keep them together — the fix is a MaterialPropertyBlock, which doesn't clone.">A) Reading <code>.material</code> clones a unique material per agent, breaking SRP batching</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Colour values themselves are cheap; the cost is the material cloning that the singular property triggers.">B) Lerping colours is expensive on the CPU</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The mesh isn't changing; the material instance count is.">C) It changes the mesh each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> After the fixes, how do you <em>prove</em> the optimization worked rather than just claim it?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Subjective impressions aren't evidence — the whole point is measured deltas.">A) Play it and note that it feels smoother</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Compare the recorded baseline numbers to the post-fix capture — ideally with the Profile Analyzer's Compare view, which diffs every marker and reports the exact deltas.">B) Compare the recorded baseline numbers to a fresh capture, ideally via the Profile Analyzer's Compare view</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Frame count doesn't measure per-frame cost; you need the timing/alloc/SetPass numbers.">C) Count how many frames rendered in total</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 What You Built</h3>
+                    <ul>
+                        <li>A <strong>stress scene</strong> with three deliberate, distinct performance bugs — one each from Lessons 2.3, 2.1/2.3, and 2.4.</li>
+                        <li>A profiled <strong>diagnosis</strong> that named each culprit from evidence: Timeline + Hierarchy Self&nbsp;ms, the GC Alloc column, and the Rendering SetPass count.</li>
+                        <li>Three targeted fixes: a <strong>garbage-free update</strong> (reused list, no LINQ, no per-frame string), a <strong>shared registry</strong> replacing per-frame <code>FindObjectsByType</code>, and a <strong>MaterialPropertyBlock</strong> restoring SRP batching.</li>
+                        <li>A measured <strong>before/after</strong> (≈41&nbsp;ms → ≈9&nbsp;ms, ~900 → ~40 SetPass, kilobytes → ~0&nbsp;B GC) verified with the Profile Analyzer.</li>
+                    </ul>
+                </div>
+
+                <p><strong>Extend it:</strong> add the uniform-grid spatial partition to scale past 2,000 agents, convert rendering to true GPU Instancing, and — the natural next step — move the neighbour computation into a parallel Burst job. That last one is exactly where the course goes next.</p>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You've mastered the <em>diagnostic</em> half of performance: measure, find, fix, prove. Module 2 got the most out of a single main thread. Module 3 changes the game — instead of making one thread do less, you make <em>many</em> threads share the work. In <strong>Lesson 3.1: Data-Oriented Thinking</strong>, we start the Job System &amp; Burst track, and the O(n²) neighbour loop you just wrestled becomes the perfect candidate for safe, Burst-compiled parallelism.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🏁 You've closed the loop</h3>
+                    <p>Measure → diagnose → fix → re-measure, on a real scene with real numbers. That loop is Module 2 in one sentence — and it's the professional habit that separates guessing from engineering.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_09.html" class="prev-lesson">← Previous: Draw Calls &amp; Batching</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_11.html" class="next-lesson">Next: Data-Oriented Thinking →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

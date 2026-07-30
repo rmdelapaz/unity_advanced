@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="The course finale: combine the module into one tested, CI-built release — write tests, a build script, and a CI workflow, and walk a real release checklist. Then a substantial guide to where to go next: procedural generation, advanced AI, DOTS Physics and Netcode for Entities, custom SRP, and remote Addressable content.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 8.4: A Tested, CI-Built Release &amp; Where to Go Next — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 8: Testing, CI &amp; Shipping</a></li>
+            <li aria-current="page">Lesson 8.4: A Tested, CI-Built Release &amp; Where to Go Next</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🏁 Lesson 8.4: A Tested, CI-Built Release — and Where to Go Next</h1>
+                <p class="lead">This is the last lesson of the last module of Unity Advanced — the top of the ladder you started at Fundamentals. It's a mini-project in two halves. First we <strong>combine the module</strong> into one release: a couple of tests, a build script, a CI workflow, and a real <em>release checklist</em> walked from version bump to smoke test. Then we turn outward — a substantial <strong>"Where to Go Next"</strong> map of the deep topics this course deliberately left out and the frontiers of the four pillars you now know. Let's ship, and then let's talk about everything still ahead.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Assemble a <strong>test + build script + CI workflow</strong> into a single reproducible release</li>
+                        <li>Walk a professional <strong>release checklist</strong> — version bump, quality settings, IL2CPP/stripping, test pass, tag, build, smoke test</li>
+                        <li>Explain what <strong>IL2CPP</strong> and <strong>managed code stripping</strong> do at release time</li>
+                        <li>Map the topics this course omitted — <strong>procedural generation</strong> and <strong>advanced AI</strong> — and know where each fits</li>
+                        <li>Identify the <strong>next frontier</strong> of each pillar you learned: DOTS Physics &amp; Netcode for Entities, custom SRP, and remote live content</li>
+                        <li>Feel genuinely done — and know your next move</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 90 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 8.1–8.3 (this lesson combines all three)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#plan" class="toc-link">What We're Shipping</a></li>
+                        <li><a href="#step-tests" class="toc-link">Step 1 — The Tests</a></li>
+                        <li><a href="#step-build" class="toc-link">Step 2 — The Build Script</a></li>
+                        <li><a href="#step-ci" class="toc-link">Step 3 — The CI Workflow</a></li>
+                        <li><a href="#checklist" class="toc-link">Step 4 — The Release Checklist</a></li>
+                        <li><a href="#built" class="toc-link">What You Built</a></li>
+                        <li><a href="#next" class="toc-link">🚀 Where to Go Next</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">The Finish Line</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="plan" class="lesson-section">
+                <h2>What We're Shipping</h2>
+                <p>The goal of this mini-project isn't a big game — it's a <em>pipeline</em>. We'll take a tiny piece of game logic, put it under test (Lesson 8.1), drive it through a build script (Lesson 8.2), gate that build on the tests in CI (Lesson 8.2), and finally walk it through the disciplined checklist that turns "a build" into "a release." By the end you'll have the exact skeleton a studio uses, sized down to fit one lesson.</p>
+                <p>Here's the whole release, drawn as the checklist we'll execute:</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 470" role="img" aria-labelledby="relTitle relDesc">
+                        <title id="relTitle">The release pipeline checklist</title>
+                        <desc id="relDesc">A vertical release-pipeline checklist with eight numbered stages connected top to bottom: version bump, quality and player settings, run tests, tag the commit, CI build with IL2CPP and stripping, produce a versioned artifact, smoke test, and release. A side branch shows that a failed smoke test loops back to fix and re-run. Each stage is a rounded card with a checkbox.</desc>
+
+                        <rect x="0" y="0" width="900" height="470" rx="8" fill="#22262d"/>
+                        <text x="450" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="16" font-weight="700" fill="#dfe8ff">Release Checklist — from commit to shipped</text>
+
+                        <!-- helper: each stage a rounded rect -->
+                        <g font-family="'Segoe UI',sans-serif">
+                            <!-- 1 -->
+                            <rect x="120" y="52" width="660" height="40" rx="6" fill="#2f3945" stroke="#45525f"/>
+                            <rect x="132" y="64" width="16" height="16" rx="3" fill="#3a4b63" stroke="#5b76a0"/>
+                            <text x="140" y="77" text-anchor="middle" font-size="12" fill="#9be6b0">✔</text>
+                            <text x="162" y="77" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffd79a">1 · Version bump</tspan>  — set bundleVersion + build number (e.g. 1.0.0+42)</text>
+                            <!-- 2 -->
+                            <rect x="120" y="100" width="660" height="40" rx="6" fill="#2f3945" stroke="#45525f"/>
+                            <rect x="132" y="112" width="16" height="16" rx="3" fill="#3a4b63" stroke="#5b76a0"/>
+                            <text x="140" y="125" text-anchor="middle" font-size="12" fill="#9be6b0">✔</text>
+                            <text x="162" y="125" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffd79a">2 · Quality &amp; Player settings</tspan>  — release config, correct scenes, icons</text>
+                            <!-- 3 -->
+                            <rect x="120" y="148" width="660" height="40" rx="6" fill="#2f3945" stroke="#45525f"/>
+                            <rect x="132" y="160" width="16" height="16" rx="3" fill="#3a4b63" stroke="#5b76a0"/>
+                            <text x="140" y="173" text-anchor="middle" font-size="12" fill="#9be6b0">✔</text>
+                            <text x="162" y="173" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffd79a">3 · Tests green</tspan>  — full Edit + Play Mode suite passes locally</text>
+                            <!-- 4 -->
+                            <rect x="120" y="196" width="660" height="40" rx="6" fill="#2f3945" stroke="#45525f"/>
+                            <rect x="132" y="208" width="16" height="16" rx="3" fill="#3a4b63" stroke="#5b76a0"/>
+                            <text x="140" y="221" text-anchor="middle" font-size="12" fill="#9be6b0">✔</text>
+                            <text x="162" y="221" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffd79a">4 · Tag the commit</tspan>  — git tag v1.0.0, push — the exact source of record</text>
+                            <!-- 5 -->
+                            <rect x="120" y="244" width="660" height="40" rx="6" fill="#2f3945" stroke="#45525f"/>
+                            <rect x="132" y="256" width="16" height="16" rx="3" fill="#3a4b63" stroke="#5b76a0"/>
+                            <text x="140" y="269" text-anchor="middle" font-size="12" fill="#9be6b0">✔</text>
+                            <text x="162" y="269" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffd79a">5 · CI build</tspan>  — IL2CPP + managed stripping, release BuildOptions</text>
+                            <!-- 6 -->
+                            <rect x="120" y="292" width="660" height="40" rx="6" fill="#2f3945" stroke="#45525f"/>
+                            <rect x="132" y="304" width="16" height="16" rx="3" fill="#3a4b63" stroke="#5b76a0"/>
+                            <text x="140" y="317" text-anchor="middle" font-size="12" fill="#9be6b0">✔</text>
+                            <text x="162" y="317" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffd79a">6 · Versioned artifact</tspan>  — MyGame-1.0.0-42.zip, retained + symbols uploaded</text>
+                            <!-- 7 -->
+                            <rect x="120" y="340" width="660" height="40" rx="6" fill="#43383a" stroke="#7a5a5f"/>
+                            <rect x="132" y="352" width="16" height="16" rx="3" fill="#5b3a4b" stroke="#a05b76"/>
+                            <text x="140" y="365" text-anchor="middle" font-size="12" fill="#ffd79a">▶</text>
+                            <text x="162" y="365" font-size="13" fill="#e6e6e6"><tspan font-weight="700" fill="#ffcf8f">7 · Smoke test</tspan>  — install the artifact on a clean device, play the happy path</text>
+                            <!-- 8 -->
+                            <rect x="120" y="400" width="660" height="44" rx="6" fill="#26382a" stroke="#4caf7d"/>
+                            <text x="450" y="427" text-anchor="middle" font-size="14" font-weight="700" fill="#9be6b0">8 · 🚀 Release — publish to testers / store channel</text>
+
+                            <!-- connectors -->
+                            <g stroke="#5b76a0" stroke-width="2">
+                                <line x1="450" y1="92" x2="450" y2="100"/>
+                                <line x1="450" y1="140" x2="450" y2="148"/>
+                                <line x1="450" y1="188" x2="450" y2="196"/>
+                                <line x1="450" y1="236" x2="450" y2="244"/>
+                                <line x1="450" y1="284" x2="450" y2="292"/>
+                                <line x1="450" y1="332" x2="450" y2="340"/>
+                                <line x1="450" y1="380" x2="450" y2="400"/>
+                            </g>
+                            <!-- smoke-fail loopback -->
+                            <path d="M120 360 C 70 360, 70 175, 120 173" fill="none" stroke="#d98a5a" stroke-width="2" stroke-dasharray="5 4"/>
+                            <text x="34" y="268" font-size="10.5" fill="#d98a5a" transform="rotate(-90 34 268)">fail → fix &amp; re-run</text>
+                        </g>
+                    </svg>
+                    <figcaption>Figure 1: The release checklist we execute in this mini-project. Eight stages from version bump to release; a failed smoke test (stage 7) loops back to a fix and a fresh run. Stages 3 and 5 are exactly Lessons 8.1 and 8.2 wired into the flow.</figcaption>
+                </figure>
+            </section>
+
+            <section id="step-tests" class="lesson-section">
+                <h2>Step 1 — The Tests</h2>
+                <p>We'll ship a trivial but real slice: a <code>WaveConfig</code> that computes how many enemies spawn in a wave. Pure logic, so it's an Edit Mode test. In your <code>Game.Runtime</code> assembly:</p>
+                <pre><code class="language-csharp">namespace Game.Runtime
+{
+    public static class WaveConfig
+    {
+        // Wave 1 spawns baseCount; each wave adds 'growth' more, capped at maxCount.
+        public static int EnemiesForWave(int wave, int baseCount, int growth, int maxCount)
+        {
+            int raw = baseCount + (wave - 1) * growth;
+            return System.Math.Min(raw, maxCount);
+        }
+    }
+}</code></pre>
+                <p>And its tests, in a Test Assembly (the <code>asmdef</code> with the <code>TestAssemblies</code> reference from Lesson 8.1):</p>
+                <pre><code class="language-csharp">using NUnit.Framework;
+using Game.Runtime;
+
+public class WaveConfigTests
+{
+    [Test]
+    public void FirstWave_UsesBaseCount()
+    {
+        Assert.That(WaveConfig.EnemiesForWave(1, 5, 3, 30), Is.EqualTo(5));
+    }
+
+    [Test]
+    public void LaterWaves_GrowLinearly()
+    {
+        // wave 4: 5 + 3*3 = 14
+        Assert.That(WaveConfig.EnemiesForWave(4, 5, 3, 30), Is.EqualTo(14));
+    }
+
+    [Test]
+    public void Growth_IsCappedAtMax()
+    {
+        Assert.That(WaveConfig.EnemiesForWave(50, 5, 3, 30), Is.EqualTo(30));
+    }
+}</code></pre>
+                <p>Run them in the Test Runner (Lesson 8.1) and confirm three green checks. This is stage 3 of the checklist, proven locally before anything ships.</p>
+            </section>
+
+            <section id="step-build" class="lesson-section">
+                <h2>Step 2 — The Build Script</h2>
+                <p>Now the build entry point from Lesson 8.2, extended with the release-time settings that make it a <em>release</em> build rather than a dev one — versioning, IL2CPP, and managed stripping:</p>
+                <pre><code class="language-csharp">using UnityEditor;
+using UnityEditor.Build.Reporting;
+using UnityEngine;
+
+public static class ReleaseBuild
+{
+    // -executeMethod ReleaseBuild.Perform
+    public static void Perform()
+    {
+        // --- Stage 1: version stamp (from CI env, with fallbacks) ---
+        string version = System.Environment.GetEnvironmentVariable("BUILD_VERSION") ?? "1.0.0";
+        string run     = System.Environment.GetEnvironmentVariable("GITHUB_RUN_NUMBER") ?? "0";
+        PlayerSettings.bundleVersion = version;
+
+        // --- Stage 5: release backend + stripping ---
+        var group = BuildTargetGroup.Standalone;
+        var named = UnityEditor.Build.NamedBuildTarget.Standalone;
+        PlayerSettings.SetScriptingBackend(named, ScriptingImplementation.IL2CPP);
+        PlayerSettings.SetManagedStrippingLevel(named, ManagedStrippingLevel.High);
+
+        string[] scenes = System.Array.ConvertAll(
+            System.Array.FindAll(EditorBuildSettings.scenes, s =&gt; s.enabled),
+            s =&gt; s.path);
+
+        var options = new BuildPlayerOptions
+        {
+            scenes = scenes,
+            locationPathName = $"Builds/Win64/MyGame-{version}-{run}/MyGame.exe",
+            target = BuildTarget.StandaloneWindows64,
+            options = BuildOptions.None    // no Development flag = a real release build
+        };
+
+        BuildReport report = BuildPipeline.BuildPlayer(options);
+        bool ok = report.summary.result == BuildResult.Succeeded;
+        Debug.Log(ok ? $"Release {version}+{run} built" : "Release build FAILED");
+        EditorApplication.Exit(ok ? 0 : 1);   // exit code gates CI (Lesson 8.2)
+    }
+}</code></pre>
+                <div class="card card-accent">
+                    <h4>📖 IL2CPP &amp; managed stripping</h4>
+                    <p><strong>IL2CPP</strong> is Unity's release scripting backend: it converts your compiled C# (IL) into C++ and then to native machine code, giving faster, harder-to-reverse-engineer builds (and it's <em>required</em> on many platforms). <strong>Managed code stripping</strong> then removes IL that nothing references, shrinking the binary. The catch: stripping can't see code reached only by reflection or serialization, so it may remove something you actually need — which is why a <strong>smoke test of the stripped release build</strong> (stage 7) is non-negotiable. A <code>link.xml</code> file preserves types the stripper would otherwise cut.</p>
+                </div>
+            </section>
+
+            <section id="step-ci" class="lesson-section">
+                <h2>Step 3 — The CI Workflow</h2>
+                <p>Wire it together with the GitHub Actions workflow from Lesson 8.2, now triggered by a <strong>tag</strong> so a release runs only when you deliberately tag a commit (stage 4), and passing the version through to the build:</p>
+                <pre><code class="language-none">name: Release
+on:
+  push:
+    tags: [ 'v*' ]          # runs only on version tags like v1.0.0
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+
+      - name: Tests
+        uses: game-ci/unity-test-runner@v4
+        env: { UNITY_LICENSE: '${{ secrets.UNITY_LICENSE }}' }
+        with: { testMode: editmode }
+
+      - name: Build
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: '${{ secrets.UNITY_LICENSE }}'
+          BUILD_VERSION: '${{ github.ref_name }}'   # the tag, e.g. v1.0.0
+        with:
+          targetPlatform: StandaloneWindows64
+          buildMethod: ReleaseBuild.Perform
+
+      - name: Upload versioned artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyGame-${{ github.ref_name }}
+          path: build/</code></pre>
+                <p>Push a tag and the pipeline runs: check out → tests (green, or the release stops) → IL2CPP release build → versioned artifact. Stages 3, 5, and 6 of the checklist now happen automatically, every time, from a clean machine.</p>
+                <blockquote>
+                    <strong>💡 Tag-triggered releases are a deliberate gate.</strong> Ordinary pushes can run a lighter test-only pipeline; the heavy release build fires only on a <code>v*</code> tag. That separation keeps everyday CI fast while making an actual release an explicit, traceable act.
+                </blockquote>
+            </section>
+
+            <section id="checklist" class="lesson-section">
+                <h2>Step 4 — The Release Checklist</h2>
+                <p>The tooling is built; releasing is now <em>walking Figure 1</em>. Do it in order, top to bottom:</p>
+                <ol>
+                    <li><strong>Version bump.</strong> Decide the version (semantic: <code>MAJOR.MINOR.PATCH</code>). Our script stamps it from the tag.</li>
+                    <li><strong>Quality &amp; Player settings.</strong> Confirm the release quality level, that the right scenes are enabled in Build Settings, and icons/name/company are set.</li>
+                    <li><strong>Tests green.</strong> Run the full suite locally first — never tag on red. The Test Runner is the gate (Lesson 8.1).</li>
+                    <li><strong>Tag the commit.</strong> <code>git tag v1.0.0 &amp;&amp; git push --tags</code>. This exact commit is now the source of record for the release.</li>
+                    <li><strong>CI build.</strong> The tag triggers the release workflow: IL2CPP, high stripping, tests re-run on a clean checkout.</li>
+                    <li><strong>Versioned artifact.</strong> CI uploads <code>MyGame-v1.0.0</code>; upload symbol files for crash symbolication (Lesson 8.3).</li>
+                    <li><strong>Smoke test.</strong> Download the artifact onto a <em>clean</em> machine, install it, and play the happy path — especially watching for anything stripping may have broken. If it fails, fix and re-run (the dashed loop).</li>
+                    <li><strong>Release.</strong> Promote the smoke-tested artifact to testers or the store channel. Then — Lesson 8.3 — watch analytics and crash reports roll in.</li>
+                </ol>
+                <div class="card card-warning">
+                    <h4>⚠️ The smoke test is the one step people skip — and regret</h4>
+                    <p>A green CI build is not a working game. IL2CPP + stripping can produce a binary that compiles perfectly and crashes on launch because reflection-only code was stripped. Installing the <em>actual artifact</em> on a clean device and playing it is the only check that catches this class of bug before players do.</p>
+                </div>
+            </section>
+
+            <section id="built" class="lesson-section">
+                <h2>What You Built</h2>
+                <div class="card card-success">
+                    <h4>✅ You now have a real release pipeline</h4>
+                    <p>Sized to one lesson, but structurally complete: <strong>tested logic</strong> (Edit Mode tests), a <strong>release build script</strong> (IL2CPP, stripping, versioning), a <strong>tag-triggered CI workflow</strong> that gates the build on green tests and emits a versioned artifact, and a <strong>disciplined checklist</strong> ending in a smoke test. Swap in a real game and this same skeleton ships it.</p>
+                </div>
+                <p><strong>Extend it:</strong> add a Play Mode smoke test that boots the main scene in CI; add a WebGL target to the build matrix and deploy the artifact to a static host; wire symbol upload into the workflow; add a second job that only runs Edit Mode tests on every push (fast) while the release job runs on tags (heavy). Each is a small, well-scoped addition to a pipeline you now understand end to end.</p>
+            </section>
+
+            <section id="next" class="lesson-section">
+                <h2>🚀 Where to Go Next</h2>
+                <p>This course was, by design, <em>focused and deep</em> rather than broad. It picked four pillars — Performance/DOTS, Rendering, Netcode, and Tooling/Pipeline — and went as deep as one course reasonably can. That means whole territories were left for you to explore. Here's the map.</p>
+
+                <h3>Two big topics this course deliberately left out</h3>
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🗺️ Procedural generation</h4>
+                        <p>Generating content — terrain, dungeons, loot, whole galaxies — from algorithms and seeds rather than by hand. Start with <strong>noise</strong> (Perlin/simplex) for terrain and <code>Unity.Mathematics.Random</code> for deterministic, seed-reproducible results. Grow into <strong>grammar/graph-based</strong> level generation, <strong>Wave Function Collapse</strong> for tile layouts, and <strong>marching cubes</strong> for voxel meshes. It pairs beautifully with what you learned: run generation in <strong>Burst jobs</strong> (Module 3) or as <strong>compute shaders</strong> (Module 5) to build worlds fast.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🧠 Advanced AI</h4>
+                        <p>You know the NavMesh; this is the <em>decision-making</em> layer above it. Learn <strong>Behaviour Trees</strong> (the industry-standard structure for reactive AI), <strong>GOAP</strong> (Goal-Oriented Action Planning — agents that plan action sequences toward goals), and <strong>utility AI</strong> (scoring options by weighted considerations). Beyond hand-authored logic sits <strong>ML-Agents</strong>, Unity's reinforcement-learning toolkit for <em>training</em> behaviour. Each is a large field; behaviour trees are the highest-leverage first step.</p>
+                    </div>
+                </div>
+
+                <h3>The next frontier of each pillar you already know</h3>
+                <ul>
+                    <li><strong>Performance &amp; DOTS →</strong> You learned entities, components, systems, and baking. Next: <strong>Unity Physics</strong> (the stateless, DOTS-native physics engine), <strong>Netcode for Entities</strong> (networking at ECS scale, a different stack from the Netcode for GameObjects you learned in Module 6), and the deeper corners of the Job System — custom <code>IJobEntity</code> chunking and cache-line-aware data design.</li>
+                    <li><strong>Rendering →</strong> You wrote HLSL, a Scriptable Renderer Feature, and compute shaders on URP. Next: authoring a <strong>fully custom Scriptable Render Pipeline</strong> from scratch, advanced <strong>RenderGraph</strong> passes, and — if your project demands cinematic fidelity — the High Definition Render Pipeline (HDRP) with its physically-based, volumetric feature set.</li>
+                    <li><strong>Netcode →</strong> You built an authoritative prototype with NetworkVariables and RPCs. Next: <strong>client-side prediction and server reconciliation</strong>, <strong>lag compensation</strong>, dedicated <strong>server hosting</strong> (Unity's Game Server Hosting / Multiplay), and the wider UGS multiplayer stack — Lobby, Relay, and Matchmaker.</li>
+                    <li><strong>Tooling &amp; Pipeline →</strong> You built EditorWindows and used Addressables locally. Next: <strong>remote Addressable content</strong> served from a CDN with content catalogs and live updates, full <strong>UI Toolkit</strong> runtime UIs, and richer editor automation — asset post-processors, custom build pipelines, and package authoring.</li>
+                </ul>
+
+                <div class="card card-success">
+                    <h4>✅ How to actually get deeper</h4>
+                    <p>Pick <em>one</em> pillar and build a small, complete project that stresses it — a proc-gen roguelike, a behaviour-tree-driven enemy sandbox, a client-predicted twitch shooter, a moddable game on remote content. Depth comes from finishing something that forces the edges. You already have the two habits that make that sustainable: you can <strong>measure</strong> (the Profiler) and you can <strong>test and ship</strong> (this module). Those never stop paying off.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Run your own release</h3>
+                    <p><strong>Objective:</strong> Execute the full pipeline on a throwaway project.</p>
+                    <p>In any small Unity project: add the <code>WaveConfig</code> class and its three tests, add the <code>ReleaseBuild.Perform</code> script, and walk the checklist locally as far as you can without CI — run the tests, set IL2CPP + stripping, build via <code>-executeMethod ReleaseBuild.Perform</code> from a terminal, then <strong>smoke test</strong> the resulting executable on your machine. Note anything the stripped build broke.</p>
+                    <details>
+                        <summary>✅ What to watch for</summary>
+                        <p>The batch-mode command is <code>Unity -batchmode -quit -projectPath . -buildTarget StandaloneWindows64 -executeMethod ReleaseBuild.Perform -logFile -</code>. Common smoke-test surprises: a <code>NullReferenceException</code> at launch from a type only referenced via reflection/JSON that <code>High</code> stripping removed — fixed by adding it to a <code>link.xml</code> or lowering the stripping level. The build succeeding but the game crashing is <em>exactly</em> the scenario the smoke test exists to catch.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Chart your path</h3>
+                    <p>From the "Where to Go Next" map, choose one direction and sketch a one-page plan: the small complete project you'd build, which of your four pillars it leans on, and the first three things you'd need to learn. Make it concrete enough to start this week.</p>
+                    <details>
+                        <summary>✅ Example</summary>
+                        <p><em>Proc-gen roguelike.</em> Leans on <strong>Performance/DOTS</strong> (generate the dungeon in Burst jobs) and a little <strong>advanced AI</strong> (behaviour-tree enemies). First three to learn: (1) seeded noise + a room-graph generation algorithm; (2) meshing a generated grid efficiently; (3) a minimal behaviour tree for enemy patrol/chase. Ship it through this module's pipeline so every build is tested and versioned.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why is a <em>smoke test of the actual artifact</em> essential even after CI reports a green build?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Re-running unit tests doesn't exercise the packaged, stripped binary on a real device.">A) To run the unit tests one more time</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! IL2CPP + managed stripping can produce a binary that compiles cleanly yet crashes at runtime (e.g. reflection-only code stripped); only running the real artifact catches it.">B) IL2CPP and stripping can make a build that compiles but crashes at runtime</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Coverage is measured during testing, not by installing the artifact.">C) To measure code coverage on the device</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What does <strong>IL2CPP</strong> do at release time?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That's Remote Config's job, not a scripting backend's.">A) Lets you change balancing without a new build</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! IL2CPP converts compiled C# (IL) to C++ and then native code, for faster, harder-to-reverse builds (and is required on some platforms).">B) Converts compiled C# to C++ then native code for faster, harder-to-reverse builds</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Gating on tests is the CI workflow + exit code, not the scripting backend.">C) Gates the build on the test suite</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> In the finale pipeline, why trigger the release workflow on a git <strong>tag</strong> rather than every push?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Tags don't run faster; they run less often, deliberately.">A) Because tagged builds compile faster</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A tag makes a release an explicit, traceable act tied to an exact commit, while everyday pushes can run a lighter test-only pipeline.">B) So a release is an explicit, traceable act tied to an exact commit</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Licensing is handled the same way regardless of the trigger.">C) Because only tags can activate the Unity license</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Which pair names topics this course <em>deliberately left out</em> for you to explore next?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Both of these were core modules of this course.">A) The Job System and Netcode for GameObjects</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Procedural generation and advanced AI (behaviour trees, GOAP, utility AI, ML-Agents) are the two big areas this focused course omitted.">B) Procedural generation and advanced AI</button>
+                            <button class="quiz-option" data-correct="false" data-hint="HLSL and compute shaders were taught in the Rendering module.">C) HLSL shaders and compute shaders</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>The Finish Line</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A <strong>release pipeline</strong> combines the module: tested logic (8.1), a build script gated in CI (8.2), and live-ops to watch it after (8.3).</li>
+                        <li>A release build differs from a dev build: <strong>versioned</strong>, built with <strong>IL2CPP</strong> and <strong>managed stripping</strong> — which makes a <strong>smoke test of the real artifact</strong> mandatory.</li>
+                        <li>The <strong>release checklist</strong> — version, settings, tests, tag, CI build, versioned artifact, smoke test, release — turns "a build" into a repeatable, traceable "release."</li>
+                        <li>This course was focused and deep; <strong>procedural generation</strong> and <strong>advanced AI</strong> are the big topics left for you, and each pillar has a clear next frontier.</li>
+                        <li>Depth comes from <strong>finishing a small complete project</strong> that stresses one pillar — and you can now measure it and ship it.</li>
+                    </ul>
+                </div>
+
+                <div class="card card-accent" style="text-align: center; padding: 2.25rem;">
+                    <h3>🏆 You finished the ladder</h3>
+                    <p>Fundamentals taught you to <em>build</em> a game. Intermediate made you <em>fluent</em> in Unity's systems. Advanced made you an <em>engineer</em>: you think in data and cache lines, schedule safe multithreaded jobs, simulate tens of thousands of entities, write HLSL and custom render passes, run compute on the GPU, synchronize an authoritative multiplayer world, bend the Editor to your workflow, stream content with Addressables, and ship a tested, CI-built release you can operate live. That's the full professional stack. Be proud of the climb — very few people finish all three courses.</p>
+                    <p style="margin-top:1rem;">Now go build the thing only you can build. 🚀</p>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>That's the whole course. Your next step is out there in your own project — pick a direction from the map above and start. Thank you for coming this far; it's been a genuine pleasure teaching you.</p>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_37.html" class="prev-lesson">← Previous: Live-Ops — Analytics, Remote Config &amp; Crash Reporting</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="index.html" class="next-lesson">🏠 Course Home — You finished! →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Parallel jobs with IJobParallelFor spread one loop across every CPU core, and the Burst compiler turns that job's C# into tightly vectorised SIMD native code. Together they deliver the Job System's real speedup.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 3.4: Parallel Jobs &amp; Burst Compilation — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 3: The Job System &amp; Burst</a></li>
+            <li aria-current="page">Lesson 3.4: Parallel Jobs &amp; Burst Compilation</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🚀 Lesson 3.4: Parallel Jobs &amp; Burst Compilation</h1>
+                <p class="lead">A single <code>IJob</code> runs on one worker thread — better than the main thread, but still one core. This lesson unlocks the other two multipliers: <strong><code>IJobParallelFor</code></strong> to spread one loop across <em>every</em> core, and the <strong>Burst compiler</strong> to turn that job's C# into vectorised native machine code. Stacked together, they're how Unity moves from "a bit faster" to "an order of magnitude faster."</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Write an <code>IJobParallelFor</code> whose <code>Execute(int index)</code> processes one element</li>
+                        <li>Schedule it across the worker pool and choose a sensible <strong>batch count</strong></li>
+                        <li>Respect the parallel-write rule — each iteration writes only its own index</li>
+                        <li>Enable <strong>Burst</strong> with <code>[BurstCompile]</code> and explain what it does (native + SIMD)</li>
+                        <li>Recognise Burst's constraints and verify the speedup with the Profiler</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 3.2–3.3 (jobs and NativeContainers)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#parallelfor" class="toc-link">IJobParallelFor</a></li>
+                        <li><a href="#batch" class="toc-link">Batches &amp; the Worker Pool</a></li>
+                        <li><a href="#writerule" class="toc-link">The Parallel-Write Rule</a></li>
+                        <li><a href="#burst" class="toc-link">Enter Burst</a></li>
+                        <li><a href="#burstwhat" class="toc-link">What Burst Actually Does</a></li>
+                        <li><a href="#constraints" class="toc-link">Burst's Constraints</a></li>
+                        <li><a href="#measure" class="toc-link">Measuring the Win</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="parallelfor" class="lesson-section">
+                <h2>IJobParallelFor</h2>
+                <p>When your work is "do the same independent thing to every element of an array," <code>IJobParallelFor</code> is the tool. Instead of one <code>Execute()</code> that loops, you write an <code>Execute(int index)</code> that handles <em>one</em> element — and the Job System calls it for every index, spread across all the worker threads:</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+
+[BurstCompile]
+struct MoveJob : IJobParallelFor
+{
+    public float deltaTime;
+    [ReadOnly] public NativeArray&lt;float3&gt; velocities;
+    public NativeArray&lt;float3&gt; positions;   // element i is written by iteration i
+
+    public void Execute(int index)          // called once per element
+    {
+        positions[index] += velocities[index] * deltaTime;
+    }
+}</code></pre>
+                <p>You schedule it with two numbers — the <strong>length</strong> (how many indices) and the <strong>batch count</strong> (how many indices each worker grabs at a time) — plus the usual optional dependency:</p>
+                <pre><code class="language-csharp">var job = new MoveJob {
+    deltaTime  = Time.deltaTime,
+    velocities = velocities,
+    positions  = positions
+};
+
+// length = positions.Length, innerloopBatchCount = 64
+JobHandle handle = job.Schedule(positions.Length, 64);
+handle.Complete();</code></pre>
+                <p>That single <code>Schedule</code> call fans 50,000 iterations out across every core. The main thread is free until <code>Complete()</code>, exactly as before — the only change is that many workers now share the loop.</p>
+            </section>
+
+            <section id="batch" class="lesson-section">
+                <h2>Batches &amp; the Worker Pool</h2>
+                <p>The <strong>batch count</strong> (the second argument) controls granularity. The Job System doesn't hand each worker a single index — that would spend more time coordinating than working. Instead it hands out <em>batches</em> of consecutive indices, and idle workers "steal" more batches as they finish. This <strong>work-stealing</strong> keeps every core busy even if some elements are cheaper than others.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 300" role="img" aria-labelledby="pforTitle pforDesc">
+                        <title id="pforTitle">A parallel-for loop split into batches across four workers</title>
+                        <desc id="pforDesc">An array of indices 0 to 255 divided into batches of 64. Four worker threads each take a batch and run Execute over its indices at the same time; as a worker finishes it steals the next available batch.</desc>
+                        <rect x="0" y="0" width="900" height="300" rx="8" fill="#22262d"/>
+                        <text x="20" y="34" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#dfe8ff">Schedule(length = 256, batchCount = 64)  →  4 batches</text>
+
+                        <!-- array with batch groupings -->
+                        <g>
+                            <rect x="20" y="52" width="205" height="34" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                            <rect x="235" y="52" width="205" height="34" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                            <rect x="450" y="52" width="205" height="34" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                            <rect x="665" y="52" width="205" height="34" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                            <g font-family="'Consolas',monospace" font-size="12" fill="#dfe6ff" text-anchor="middle">
+                                <text x="122" y="74">indices 0–63</text><text x="337" y="74">64–127</text><text x="552" y="74">128–191</text><text x="767" y="74">192–255</text>
+                            </g>
+                        </g>
+
+                        <defs>
+                            <marker id="da" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker>
+                        </defs>
+                        <line x1="122" y1="88" x2="122" y2="150" stroke="#9be6b0" stroke-width="2" marker-end="url(#da)"/>
+                        <line x1="337" y1="88" x2="337" y2="150" stroke="#9be6b0" stroke-width="2" marker-end="url(#da)"/>
+                        <line x1="552" y1="88" x2="552" y2="150" stroke="#9be6b0" stroke-width="2" marker-end="url(#da)"/>
+                        <line x1="767" y1="88" x2="767" y2="150" stroke="#9be6b0" stroke-width="2" marker-end="url(#da)"/>
+
+                        <g font-family="'Segoe UI',sans-serif" font-size="12">
+                            <rect x="40" y="152" width="164" height="60" rx="6" fill="#2c3b30" stroke="#4e6b52"/>
+                            <text x="122" y="176" text-anchor="middle" fill="#cfe0ff">worker 1</text>
+                            <text x="122" y="196" text-anchor="middle" font-size="10" fill="#9be6b0">Execute(0..63)</text>
+                            <rect x="255" y="152" width="164" height="60" rx="6" fill="#2c3b30" stroke="#4e6b52"/>
+                            <text x="337" y="176" text-anchor="middle" fill="#cfe0ff">worker 2</text>
+                            <text x="337" y="196" text-anchor="middle" font-size="10" fill="#9be6b0">Execute(64..127)</text>
+                            <rect x="470" y="152" width="164" height="60" rx="6" fill="#2c3b30" stroke="#4e6b52"/>
+                            <text x="552" y="176" text-anchor="middle" fill="#cfe0ff">worker 3</text>
+                            <text x="552" y="196" text-anchor="middle" font-size="10" fill="#9be6b0">Execute(128..191)</text>
+                            <rect x="685" y="152" width="164" height="60" rx="6" fill="#2c3b30" stroke="#4e6b52"/>
+                            <text x="767" y="176" text-anchor="middle" fill="#cfe0ff">worker 4</text>
+                            <text x="767" y="196" text-anchor="middle" font-size="10" fill="#9be6b0">Execute(192..255)</text>
+                        </g>
+                        <text x="450" y="252" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#8fd0ff">all four run at the same time · a finished worker steals the next free batch</text>
+                    </svg>
+                    <figcaption>Figure 1: <code>IJobParallelFor</code> divides the index range into batches; workers process them concurrently and steal more as they free up.</figcaption>
+                </figure>
+
+                <p>Rule of thumb for batch count: too small (like 1) and coordination overhead dominates; too large (the whole array in one batch) and you lose load balancing. For cheap per-element work, larger batches (64–128); for heavy per-element work, smaller batches (1–16) so stealing balances the load. Start around 32–64 and profile.</p>
+            </section>
+
+            <section id="writerule" class="lesson-section">
+                <h2>The Parallel-Write Rule</h2>
+                <p>Because many workers run <code>Execute</code> at once, there's a hard rule: <strong>iteration <code>index</code> may write only to <code>[index]</code></strong> of its output container. If two iterations could write the same slot, you have a race — and the safety system will refuse to schedule it.</p>
+                <p>So <code>positions[index] += ...</code> is fine (each iteration owns its slot), but "add my value into a shared <code>total</code>" is <em>not</em> — every iteration would fight over <code>total</code>. Reductions and many-to-one writes need different tools: a <code>NativeParallelHashMap</code>, a per-index output you sum afterward, or the <code>.AsParallelWriter()</code> variants of some containers.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Reading anywhere, writing only your slot</h4>
+                    <p>You may <em>read</em> any element of a <code>[ReadOnly]</code> input (a flocking job reads all neighbours' positions), but you may only <em>write</em> your own index in a read-write output. Keep that split clear and parallel jobs stay race-free by construction.</p>
+                </div>
+            </section>
+
+            <section id="burst" class="lesson-section">
+                <h2>Enter Burst</h2>
+                <p>Parallelism spreads the work; <strong>Burst</strong> makes each piece dramatically faster. Burst is a compiler that takes the C# in your jobs and compiles it — ahead of time — into highly optimised <strong>native machine code</strong>, bypassing the general-purpose Mono/IL2CPP path. Turning it on is almost insultingly easy: add one attribute.</p>
+                <pre><code class="language-csharp">[BurstCompile]                       // ← that's the whole opt-in
+struct MoveJob : IJobParallelFor
+{
+    public float deltaTime;
+    [ReadOnly] public NativeArray&lt;float3&gt; velocities;
+    public NativeArray&lt;float3&gt; positions;
+    public void Execute(int index)
+    {
+        positions[index] += velocities[index] * deltaTime;
+    }
+}</code></pre>
+                <p>The first time a Burst job runs, Unity compiles it (you'll see it in the Burst menu and a brief one-time cost); after that it's native. It's common to see a Burst-compiled parallel job run <strong>5–20× faster</strong> than the same code without Burst — on top of the parallel speedup. This is the concrete reason the 25,600-entity scene in <a href="lesson_16.html">Lesson 4.1</a> is comfortable rather than a slideshow: its systems are Burst-compiled jobs.</p>
+            </section>
+
+            <section id="burstwhat" class="lesson-section">
+                <h2>What Burst Actually Does</h2>
+                <p>Burst gets its speed from a few compounding wins:</p>
+                <ul>
+                    <li><strong>Native code via LLVM</strong> — it compiles to optimised machine code with aggressive inlining and no managed-runtime overhead.</li>
+                    <li><strong>SIMD vectorisation</strong> — it packs several <code>float</code>s into one wide CPU register and operates on them together. This is why <code>Unity.Mathematics</code> (<code>float3</code>, <code>float4</code>) matters: those types map onto SIMD lanes, so a <code>float3</code> add can be <em>one</em> instruction.</li>
+                    <li><strong>Assumptions it's allowed to make</strong> — because jobs forbid managed state and aliasing, Burst can optimise far more boldly than a general C# compiler ever could.</li>
+                    <li><strong>Fast math</strong> — optionally, it can relax IEEE floating-point strictness for extra speed where you don't need bit-exact results.</li>
+                </ul>
+
+                <div class="card card-success">
+                    <h4>✅ Pro Tip — the Burst Inspector</h4>
+                    <p>Open <strong>Jobs ▸ Burst ▸ Open Inspector…</strong> to see the actual assembly Burst generates for your job. You don't need to read assembly fluently, but spotting vector instructions (like <code>addps</code>/<code>mulps</code>) confirms your loop vectorised — and their absence hints your data layout or types are blocking it.</p>
+                </div>
+            </section>
+
+            <section id="constraints" class="lesson-section">
+                <h2>Burst's Constraints</h2>
+                <p>Burst only compiles code that plays by the data-oriented rules — which is the same discipline jobs already demand:</p>
+                <ul>
+                    <li><strong>No managed types</strong> inside a Burst job — no classes, no managed arrays, no <code>string</code> (use <code>FixedString</code>), no boxing.</li>
+                    <li><strong>No calls into most of the Unity managed API</strong> — stick to math, NativeContainers, and Burst-compatible functions.</li>
+                    <li><strong>No try/catch in release</strong> — exceptions are supported only as editor-side safety checks, not as control flow.</li>
+                    <li>Both the <em>struct</em> and, for systems later, the relevant methods carry <code>[BurstCompile]</code>.</li>
+                </ul>
+                <p>If Burst can't compile something, it tells you at compile time (or falls back to non-Burst with a warning) — it won't silently ship slow code. In practice these constraints overlap almost perfectly with what a job is allowed to do anyway, so "make it a clean job" and "make it Burst-able" are nearly the same task.</p>
+            </section>
+
+            <section id="measure" class="lesson-section">
+                <h2>Measuring the Win</h2>
+                <p>Never assume a speedup — measure it, using the <a href="lesson_06.html">Profiler</a> from Module 2. The Job System has its own timeline lane; a well-scheduled parallel job shows up as many short bars filling several worker threads while the main thread stays thin. Compare three versions of the same workload:</p>
+                <div class="mermaid">
+flowchart LR
+    A["Serial loop<br/>on main thread<br/>(baseline)"] --> B["IJobParallelFor<br/>no Burst<br/>~cores× faster"]
+    B --> C["IJobParallelFor<br/>+ [BurstCompile]<br/>~cores× × Burst× faster"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 2: The two multipliers stack — parallelism across cores, then Burst's native/SIMD speedup on each core.</p>
+                <p>The exact numbers depend on the work and the hardware, but the pattern is reliable: parallelism gives you roughly a per-core multiplier, and Burst multiplies again on top. Toggle Burst off with <strong>Jobs ▸ Burst ▸ Enable Compilation</strong> to feel the difference in a single scene.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Parallelise and Burst a job</h3>
+                    <p><strong>Objective:</strong> Convert a serial loop into a Burst-compiled parallel job.</p>
+                    <ol>
+                        <li>Start from a serial loop that sets <code>heights[i] = math.sin(positions[i].x) * math.cos(positions[i].z)</code> over 100,000 elements.</li>
+                        <li>Rewrite it as an <code>IJobParallelFor</code> with <code>Execute(int index)</code>, a <code>[ReadOnly]</code> positions input and a heights output.</li>
+                        <li>Add <code>[BurstCompile]</code>. Schedule with a batch count of 64 and complete it.</li>
+                        <li>Profile it against the serial loop; open the Burst Inspector and look for vector instructions.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ Solution sketch</summary>
+                        <pre><code class="language-csharp">[BurstCompile]
+struct HeightJob : IJobParallelFor {
+    [ReadOnly] public NativeArray&lt;float3&gt; positions;
+    public NativeArray&lt;float&gt; heights;
+    public void Execute(int i) {
+        heights[i] = math.sin(positions[i].x) * math.cos(positions[i].z);
+    }
+}
+var h = new HeightJob { positions = pos, heights = hgt }.Schedule(pos.Length, 64);
+h.Complete();</code></pre>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Why won't it Burst?</h3>
+                    <p>A teammate's job has <code>[BurstCompile]</code> but a field <code>public List&lt;GameObject&gt; targets;</code> and calls <code>Debug.Log</code> in <code>Execute</code>. Name why Burst rejects it and how to fix the data.</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p><code>List&lt;GameObject&gt;</code> is a managed collection of managed references — forbidden in a job at all, and doubly so under Burst. <code>Debug.Log</code> is a managed Unity API call. Fix: copy the data you need into a <code>NativeArray</code> of blittable values (e.g. target positions as <code>float3</code>) before scheduling, and remove the logging from the hot loop.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> In an <code>IJobParallelFor</code>, iteration <code>index</code> may safely write to…</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Each iteration owns its own slot; writing only [index] avoids races between concurrent workers.">A) only its own output slot, <code>output[index]</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="A shared accumulator is a race — many iterations would fight over it.">B) a single shared <code>total</code> accumulator</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Writing neighbours' slots races with their own iterations.">C) any index it likes, including its neighbours'</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What does adding <code>[BurstCompile]</code> to a job do?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Burst is about codegen, not thread count.">A) It adds more worker threads</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Burst compiles the job's C# to optimised native, SIMD-vectorised machine code.">B) It compiles the job's C# to optimised, SIMD-vectorised native code</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't relax the golden rule or the container rules.">C) It lets the job use managed classes safely</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why does <code>Unity.Mathematics</code> (<code>float3</code>) help Burst specifically?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It's not about precision.">A) It stores more decimal places than Vector3</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Its types map onto SIMD registers, so Burst can operate on several components in one instruction.">B) Its types map onto SIMD registers so several components process in one instruction</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Burst compiles the loop; the types enable vectorisation, not looping.">C) It writes the for-loop for you</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong><code>IJobParallelFor</code></strong> turns "loop over an array" into one <code>Execute(int index)</code> the pool runs across every core.</li>
+                        <li>Schedule with <strong>length + batch count</strong>; batches enable <strong>work-stealing</strong> — start ~32–64 and profile.</li>
+                        <li><strong>Parallel-write rule:</strong> read anywhere (<code>[ReadOnly]</code>), but write only your own <code>[index]</code>; reductions need special tools.</li>
+                        <li><strong>Burst</strong> is one attribute (<code>[BurstCompile]</code>) that compiles jobs to native, SIMD-vectorised code — often 5–20× on top of parallelism.</li>
+                        <li>Burst needs the data-oriented discipline (no managed types/API, no release exceptions); <code>float3</code>/<code>float4</code> vectorise well.</li>
+                        <li>Always <strong>measure</strong> in the Profiler and confirm vectorisation in the <strong>Burst Inspector</strong>.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You have all three DOTS multipliers — packed data, parallel jobs, and Burst. In <strong>Lesson 3.5</strong> you'll put them together in a mini-project: a Burst-compiled parallel field simulation that moves tens of thousands of points every frame — the direct on-ramp to ECS in Module 4.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🚀 Every core, every lane</h3>
+                    <p>Spread the loop across cores with <code>IJobParallelFor</code>, then compile each core's work to native SIMD with Burst. That combination is the engine under DOTS — and the reason data-oriented Unity scales to the tens of thousands.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_13.html" class="prev-lesson">← Previous: NativeContainers &amp; the Safety System</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_15.html" class="next-lesson">Next: A Burst-Compiled Parallel Field Simulation →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

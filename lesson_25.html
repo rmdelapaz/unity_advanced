@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Module 5 mini-project: build a complete custom full-screen post-process effect for URP — a comic-book look (Sobel edges + colour posterize) as a full-screen HLSL shader delivered by a RenderGraph Scriptable Renderer Feature, with a real before/after render.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 5.5: A Custom Post-Process Renderer Feature — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 5: Advanced Rendering</a></li>
+            <li aria-current="page">Lesson 5.5: A Custom Post-Process Renderer Feature</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🎨 Lesson 5.5: Mini-Project — A Custom Post-Process Renderer Feature</h1>
+                <p class="lead">Time to combine the module. You'll build a complete <strong>comic-book post-process</strong> — Sobel edge detection for ink outlines plus colour posterization — as a full-screen HLSL shader (Lesson 5.2) delivered by a RenderGraph Scriptable Renderer Feature (Lesson 5.3), injected at the right point in the frame (Lesson 5.1). It ends in a real before/after render of the effect running in Unity 6.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build</h2>
+                    <ul>
+                        <li>A <strong>full-screen blit shader</strong> that inks edges and posterizes colour</li>
+                        <li>A <strong>Scriptable Renderer Feature</strong> + RenderGraph pass that applies it before post-processing</li>
+                        <li>Inspector <strong>settings</strong> — edge strength and colour levels — that tune the look live</li>
+                        <li>The finished effect running over a real scene</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 90 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 5.1–5.4 (all of Module 5)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#goal" class="toc-link">The Goal</a></li>
+                        <li><a href="#step1" class="toc-link">Step 1: The Full-Screen Shader</a></li>
+                        <li><a href="#step2" class="toc-link">Step 2: The Renderer Feature</a></li>
+                        <li><a href="#step3" class="toc-link">Step 3: The RenderGraph Pass</a></li>
+                        <li><a href="#step4" class="toc-link">Step 4: Wire It Up</a></li>
+                        <li><a href="#tuning" class="toc-link">Tuning &amp; Extending</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="goal" class="lesson-section">
+                <h2>The Goal</h2>
+                <p>Here's the finished effect — a <strong>real Unity 6 capture</strong>, the same scene with the feature off (left) and on (right):</p>
+                <figure class="render-figure">
+                    <img src="images/post-feature.png" alt="Left: a normal render of colourful primitive shapes against a sky. Right: the same scene with a comic-book post-process — colours reduced to flat bands and dark ink outlines traced around every edge.">
+                    <figcaption>Figure 1: The <code>ComicPost</code> effect, rendered live in Unity 6. <strong>Left</strong> — the scene as normally rendered. <strong>Right</strong> — the full-screen pass applied: colours posterized into flat bands and a Sobel edge pass inking the silhouettes. Both are genuine captures; the right is the fully-rendered frame after the effect's full-screen blit.</figcaption>
+                </figure>
+                <p>Everything you need you've already met: a fragment shader that samples the screen (5.2), the feature/pass plumbing with <code>RecordRenderGraph</code> and <code>AddBlitPass</code> (5.3), and the injection point (5.1). We're assembling them into one polished, tweakable effect.</p>
+            </section>
+
+            <section id="step1" class="lesson-section">
+                <h2>Step 1: The Full-Screen Shader</h2>
+                <p>A full-screen post shader is different from the object shader in Lesson 5.2: it doesn't transform a mesh, it covers the whole screen and samples the already-rendered image. URP gives you the boilerplate through <strong><code>Blit.hlsl</code></strong> — it provides the fullscreen <code>Vert</code>, the <code>Varyings</code> (with <code>.texcoord</code>), and the source texture <code>_BlitTexture</code>. Create it as <strong>Create ▸ Shader ▸ Unlit</strong> and replace the contents:</p>
+                <pre><code class="language-none">Shader "Custom/ComicPost"
+{
+    SubShader
+    {
+        Tags { "RenderPipeline"="UniversalPipeline" }
+        ZWrite Off  Cull Off
+
+        Pass
+        {
+            Name "ComicPost"
+            HLSLPROGRAM
+            #pragma vertex Vert            // fullscreen triangle, from Blit.hlsl
+            #pragma fragment frag
+            #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Blit.hlsl"
+
+            float _EdgeStrength;
+            float _Levels;
+
+            float Lum(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
+            float SampleLum(float2 uv)
+            {
+                return Lum(SAMPLE_TEXTURE2D(_BlitTexture, sampler_LinearClamp, uv).rgb);
+            }
+
+            half4 frag (Varyings IN) : SV_Target
+            {
+                float2 uv = IN.texcoord;
+                float2 t  = _BlitTexture_TexelSize.xy;
+
+                // Sobel edge detection on luminance (3×3 neighbourhood).
+                float tl=SampleLum(uv+t*float2(-1, 1)), tm=SampleLum(uv+t*float2(0, 1)), tr=SampleLum(uv+t*float2(1, 1));
+                float ml=SampleLum(uv+t*float2(-1, 0)),                                  mr=SampleLum(uv+t*float2(1, 0));
+                float bl=SampleLum(uv+t*float2(-1,-1)), bm=SampleLum(uv+t*float2(0,-1)), br=SampleLum(uv+t*float2(1,-1));
+                float gx = -tl - 2*ml - bl + tr + 2*mr + br;
+                float gy =  tl + 2*tm + tr - bl - 2*bm - br;
+                float edge = saturate(sqrt(gx*gx + gy*gy) * _EdgeStrength);
+
+                // Posterize the colour into flat bands, then ink the edges.
+                float3 col = SAMPLE_TEXTURE2D(_BlitTexture, sampler_LinearClamp, uv).rgb;
+                col = floor(col * _Levels) / _Levels;
+                col *= (1.0 - edge);
+
+                return half4(col, 1.0);
+            }
+            ENDHLSL
+        }
+    }
+}</code></pre>
+                <p><code>_BlitTexture</code> is the source (the current camera colour), <code>sampler_LinearClamp</code> is a ready-made sampler, and <code>_BlitTexture_TexelSize.xy</code> gives the one-pixel step for neighbour sampling. The Sobel kernel measures the local luminance gradient — big where colours change sharply (an edge), near zero on flat areas — and we multiply the posterized colour down to black there.</p>
+            </section>
+
+            <section id="step2" class="lesson-section">
+                <h2>Step 2: The Renderer Feature</h2>
+                <p>The feature carries the tweakable settings, builds the pass, and pushes the settings into the material each frame. Same skeleton as Lesson 5.3, now with a serialized <code>Settings</code> block:</p>
+                <pre><code class="language-csharp">using System;
+using UnityEngine;
+using UnityEngine.Rendering.Universal;
+
+public class ComicPostFeature : ScriptableRendererFeature
+{
+    [Serializable]
+    public class Settings
+    {
+        public Shader shader;
+        [Range(0f, 4f)]  public float edgeStrength = 1.4f;
+        [Range(2f, 16f)] public float levels = 4f;
+    }
+
+    public Settings settings = new Settings();
+    Material material;
+    ComicPostPass pass;
+
+    public override void Create()
+    {
+        if (settings.shader == null) return;
+        material = new Material(settings.shader);
+        pass = new ComicPostPass(material)
+        {
+            renderPassEvent = RenderPassEvent.BeforeRenderingPostProcessing
+        };
+    }
+
+    public override void AddRenderPasses(ScriptableRenderer renderer,
+        ref RenderingData renderingData)
+    {
+        if (pass == null) return;
+        if (renderingData.cameraData.cameraType != CameraType.Game) return;
+
+        // push live settings into the material
+        material.SetFloat("_EdgeStrength", settings.edgeStrength);
+        material.SetFloat("_Levels", settings.levels);
+
+        renderer.EnqueuePass(pass);
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        if (Application.isPlaying) Destroy(material);
+        else DestroyImmediate(material);
+    }
+}</code></pre>
+            </section>
+
+            <section id="step3" class="lesson-section">
+                <h2>Step 3: The RenderGraph Pass</h2>
+                <p>The pass is the Lesson 5.3 pattern verbatim — grab the camera colour, blit it through the material into a fresh texture, swap that back in:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEngine.Rendering;
+using UnityEngine.Rendering.RenderGraphModule;
+using UnityEngine.Rendering.RenderGraphModule.Util;
+using UnityEngine.Rendering.Universal;
+
+public class ComicPostPass : ScriptableRenderPass
+{
+    const string k_PassName = "ComicPostPass";
+    Material material;
+
+    public ComicPostPass(Material material) { this.material = material; }
+
+    public override void RecordRenderGraph(RenderGraph renderGraph,
+        ContextContainer frameData)
+    {
+        var resourceData = frameData.Get&lt;UniversalResourceData&gt;();
+        if (resourceData.isActiveTargetBackBuffer) return;
+
+        TextureHandle source = resourceData.activeColorTexture;
+
+        var desc = source.GetDescriptor(renderGraph);
+        desc.name = "_ComicPostTemp";
+        desc.depthBufferBits = 0;
+        TextureHandle destination = renderGraph.CreateTexture(desc);
+
+        if (!source.IsValid() || !destination.IsValid()) return;
+
+        var blit = new RenderGraphUtils.BlitMaterialParameters(source, destination, material, 0);
+        renderGraph.AddBlitPass(blit, k_PassName);
+
+        resourceData.cameraColor = destination;
+    }
+}</code></pre>
+                <p>Because the effect is a single full-screen pass, one blit is all it takes; the ping-pong to a fresh <code>destination</code> avoids reading and writing the same texture at once (Lesson 5.3's data-flow point).</p>
+            </section>
+
+            <section id="step4" class="lesson-section">
+                <h2>Step 4: Wire It Up</h2>
+                <ol>
+                    <li>Select your <strong>Universal Renderer Data</strong> asset (from the URP asset's Renderer list).</li>
+                    <li>Click <strong>Add Renderer Feature ▸ Comic Post Feature</strong>.</li>
+                    <li>Assign the <strong>ComicPost</strong> shader to the feature's <em>Shader</em> field.</li>
+                    <li>Enter Play — the game view turns into the comic look; the Scene view stays normal (we filtered to <code>CameraType.Game</code>).</li>
+                    <li>Drag <strong>Edge Strength</strong> and <strong>Levels</strong> in the feature Inspector and watch the outlines thicken and the colour banding coarsen in real time.</li>
+                </ol>
+                <div class="card card-warning">
+                    <h4>⚠️ Full-screen shader gotchas</h4>
+                    <p>Use <code>#pragma vertex Vert</code> from <code>Blit.hlsl</code> — <em>don't</em> write your own vertex function for a full-screen pass. Sample <code>_BlitTexture</code> (not <code>_MainTex</code>), and read the pixel step from <code>_BlitTexture_TexelSize</code>. Getting the source-texture name wrong is the most common "my post effect is black" bug.</p>
+                </div>
+            </section>
+
+            <section id="tuning" class="lesson-section">
+                <h2>Tuning &amp; Extending</h2>
+                <ul>
+                    <li><strong>Edge on depth/normals.</strong> Colour-based Sobel misses edges between similar colours. Sample the camera <em>depth</em> or <em>normals</em> texture instead for cleaner, geometry-accurate outlines (request them via the feature's inputs).</li>
+                    <li><strong>Coloured ink.</strong> Instead of multiplying to black, <code>lerp</code> toward an ink colour so outlines can be blue or sepia.</li>
+                    <li><strong>Volume control.</strong> Drive <code>edgeStrength</code>/<code>levels</code> from a custom <code>VolumeComponent</code> so the look blends per-area like built-in post effects.</li>
+                    <li><strong>Combine effects.</strong> Add a vignette or a paper-grain texture in the same fragment shader for a fuller comic style.</li>
+                </ul>
+                <div class="card card-success">
+                    <h4>✅ What you built — the whole module</h4>
+                    <p>You wrote HLSL that samples the screen (5.2), packaged it in a RenderGraph Renderer Feature at the right injection point (5.1, 5.3), and made it tweakable — a complete, shippable custom post effect. Compute (5.4) would be the tool if this needed a heavy multi-pass blur or simulation feeding in. You now own the full URP rendering-extension pipeline.</p>
+                </div>
+            </section>
+
+            <section id="quiz" class="lesson-section">
+                <h2>Quick Quiz</h2>
+                <div class="card quiz-container">
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> For a full-screen post shader, which vertex function should you use?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Blit.hlsl's Vert draws the fullscreen triangle and provides the Varyings/texcoord — you don't hand-write a vertex function for a full-screen pass.">A) <code>Vert</code> from <code>Blit.hlsl</code> — it draws the fullscreen triangle</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A per-vertex mesh transform is for object shaders, not full-screen passes.">B) A custom vertex function that transforms mesh vertices</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Full-screen passes still need a vertex stage — Blit.hlsl supplies it.">C) None — post shaders skip the vertex stage</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Which texture does the fragment shader sample to read the rendered scene?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="_MainTex is the legacy Graphics.Blit name, not the URP fullscreen source.">A) <code>_MainTex</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! URP full-screen passes sample _BlitTexture (with sampler_LinearClamp); using the wrong name is the classic black-screen bug.">B) <code>_BlitTexture</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="There's no _ScreenColor built-in for this.">C) <code>_ScreenColor</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why inject the feature at <code>BeforeRenderingPostProcessing</code> rather than <code>AfterRenderingOpaques</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! At BeforeRenderingPostProcessing the transparents are already drawn, so the effect covers the whole scene.">A) So the effect covers transparents too, which are drawn after opaques</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Injection point is about coverage/order, not compile validity.">B) Otherwise the shader won't compile</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Both points exist; the choice is about what's been drawn yet.">C) <code>AfterRenderingOpaques</code> doesn't exist in URP</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A full-screen post shader uses <strong><code>Blit.hlsl</code></strong>'s <code>Vert</code> and samples <strong><code>_BlitTexture</code></strong> — never a hand-written vertex or <code>_MainTex</code>.</li>
+                        <li><strong>Sobel</strong> on luminance finds edges; <strong>posterize</strong> (<code>floor(col*levels)/levels</code>) flattens colour into bands — together, a comic look.</li>
+                        <li>The <strong>feature</strong> holds serialized settings and pushes them into the material each frame; the <strong>pass</strong> blits through it via <code>RecordRenderGraph</code>/<code>AddBlitPass</code>.</li>
+                        <li>Inject at <strong><code>BeforeRenderingPostProcessing</code></strong> so the effect sees the full scene; filter to <code>CameraType.Game</code>.</li>
+                        <li>Extend with depth/normal edges, coloured ink, and <code>VolumeComponent</code> control — the same pattern scales to any full-screen effect.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>That completes the Rendering pillar. Next we change gears entirely — from one machine's pixels to many machines talking to each other. <strong>Module 6: Multiplayer — Netcode for GameObjects</strong> begins with <strong>Lesson 6.1: Networking Foundations — Client/Server &amp; Topologies</strong>.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🎨 A look of your own</h3>
+                    <p>Shader, feature, pass, injection point — you assembled all four into a real post effect. Every custom look your game ships will follow this exact shape.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_24.html" class="prev-lesson">← Previous: Compute Shaders</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_26.html" class="next-lesson">Next: Networking Foundations — Client/Server &amp; Topologies →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

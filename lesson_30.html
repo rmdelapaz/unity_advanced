@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Module 6 mini-project: build a small authoritative multiplayer prototype with Netcode for GameObjects — server-authoritative player movement via RPC, server-spawned collectible coins, and a synced score NetworkVariable, playable host-and-client.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 6.5: A Small Authoritative Multiplayer Prototype — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 6: Multiplayer — Netcode for GameObjects</a></li>
+            <li aria-current="page">Lesson 6.5: A Small Authoritative Multiplayer Prototype</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🏆 Lesson 6.5: Mini-Project — A Small Authoritative Multiplayer Prototype</h1>
+                <p class="lead">Everything Module 6 taught, in one playable game. Two or more players share an arena, move their avatars, and race to collect coins — with a synced score. Every rule runs on the <strong>authoritative server</strong>: clients request movement, the server owns positions and pickups, and scores replicate to all. It's small, but it's <em>correct</em> netcode, end to end.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build</h2>
+                    <ul>
+                        <li><strong>Server-authoritative movement</strong> — clients send input via RPC, the server moves and replicates</li>
+                        <li><strong>Server-spawned coins</strong> as NetworkObjects</li>
+                        <li><strong>Server-validated pickups</strong> that award a <strong>synced score NetworkVariable</strong></li>
+                        <li>A scoreboard driven by <code>OnValueChanged</code>, playable host + client</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 120 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 6.1–6.4 (all of Module 6)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#arch" class="toc-link">The Architecture</a></li>
+                        <li><a href="#setup" class="toc-link">Step 1: Scene &amp; Prefabs</a></li>
+                        <li><a href="#move" class="toc-link">Step 2: Authoritative Movement</a></li>
+                        <li><a href="#coins" class="toc-link">Step 3: Coins &amp; Pickups</a></li>
+                        <li><a href="#score" class="toc-link">Step 4: Synced Score &amp; UI</a></li>
+                        <li><a href="#play" class="toc-link">Step 5: Play It</a></li>
+                        <li><a href="#extend" class="toc-link">What You Built &amp; Extending</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="arch" class="lesson-section">
+                <h2>The Architecture</h2>
+                <p>Every piece maps onto the "server writes, clients request" model. Here's the whole loop:</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 280" role="img" aria-labelledby="archTitle archDesc">
+                        <title id="archTitle">The authoritative loop of the prototype</title>
+                        <desc id="archDesc">Client reads input and sends a MoveRpc to the server; the server moves the avatar and NetworkTransform replicates it; the server detects a coin pickup, despawns the coin, and increments a Score NetworkVariable that replicates to clients, which update the scoreboard via OnValueChanged.</desc>
+                        <rect x="0" y="0" width="900" height="280" rx="8" fill="#22262d"/>
+                        <rect x="30" y="40" width="200" height="200" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="130" y="64" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#dbe9f5">Client (owner)</text>
+                        <text x="130" y="92" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ec">read input</text>
+                        <text x="130" y="200" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8fd0ff">scoreboard UI</text>
+                        <text x="130" y="216" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">OnValueChanged</text>
+
+                        <rect x="350" y="40" width="200" height="200" rx="8" fill="#2c4a30" stroke="#4e8a5b"/>
+                        <text x="450" y="64" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#d6f0da">Server (authority)</text>
+                        <text x="450" y="92" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9bd0a5">move avatar</text>
+                        <text x="450" y="112" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9bd0a5">detect pickup (trigger)</text>
+                        <text x="450" y="132" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9bd0a5">despawn coin</text>
+                        <text x="450" y="152" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9bd0a5">Score.Value += 10</text>
+
+                        <rect x="670" y="40" width="200" height="200" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="770" y="64" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#dbe9f5">All clients</text>
+                        <text x="770" y="92" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ec">NetworkTransform</text>
+                        <text x="770" y="108" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">avatars move</text>
+                        <text x="770" y="140" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ec">coins despawn</text>
+                        <text x="770" y="172" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ec">Score replicates</text>
+
+                        <defs>
+                            <marker id="au" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8fd0ff"/></marker>
+                            <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker>
+                        </defs>
+                        <line x1="230" y1="96" x2="348" y2="96" stroke="#8fd0ff" stroke-width="2.2" marker-end="url(#au)"/>
+                        <text x="289" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8fd0ff">MoveRpc</text>
+                        <line x1="550" y1="120" x2="668" y2="120" stroke="#9be6b0" stroke-width="2.2" marker-end="url(#ag)"/>
+                        <text x="609" y="110" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#9be6b0">replicate</text>
+                        <line x1="668" y1="180" x2="232" y2="196" stroke="#9be6b0" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ag)"/>
+                        <text x="450" y="262" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">Score NetworkVariable → OnValueChanged → every scoreboard</text>
+                    </svg>
+                    <figcaption>Figure 1: The loop. Input becomes a request (RPC) → the server acts authoritatively → results replicate as transform + NetworkVariable → clients present them. Nothing shared is ever written by a client.</figcaption>
+                </figure>
+            </section>
+
+            <section id="setup" class="lesson-section">
+                <h2>Step 1: Scene &amp; Prefabs</h2>
+                <ol>
+                    <li>A scene with a ground plane, a <strong>NetworkManager</strong> (Unity Transport), and the <code>ConnectionMenu</code> from Lesson 6.1.</li>
+                    <li><strong>Player prefab</strong>: a capsule + <code>NetworkObject</code> + a <strong><code>NetworkTransform</code></strong> (leave it server-authoritative) + a trigger collider (Is Trigger on) + the scripts below. Assign it as the NetworkManager's <em>Player Prefab</em>.</li>
+                    <li><strong>Coin prefab</strong>: a small sphere + <code>NetworkObject</code> + <code>NetworkTransform</code> + the <code>Coin</code> script + a (non-trigger) collider. Register it in the NetworkManager's network prefabs list.</li>
+                    <li>An empty <strong>CoinSpawner</strong> object with a <code>NetworkObject</code> and the spawner script.</li>
+                </ol>
+            </section>
+
+            <section id="move" class="lesson-section">
+                <h2>Step 2: Authoritative Movement</h2>
+                <p>The owner reads input and <em>requests</em> movement; the server applies it, and the server-authoritative <code>NetworkTransform</code> replicates the new position to everyone. The client never moves its own transform directly:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+
+public class PlayerMovement : NetworkBehaviour
+{
+    [SerializeField] float speed = 5f;
+
+    void Update()
+    {
+        if (!IsOwner) return;   // only drive the avatar I own
+
+        var input = new Vector3(Input.GetAxis("Horizontal"), 0f, Input.GetAxis("Vertical"));
+        if (input.sqrMagnitude &gt; 0.001f)
+            MoveRpc(input.normalized);   // request → runs on the server
+    }
+
+    [Rpc(SendTo.Server)]
+    void MoveRpc(Vector3 direction)
+    {
+        // Executes on the SERVER. It owns the transform; NetworkTransform replicates it.
+        transform.position += direction * speed * Time.deltaTime;
+    }
+}</code></pre>
+                <div class="card card-warning">
+                    <h4>⚠️ Per-frame RPCs are a prototype convenience</h4>
+                    <p>Sending a move RPC every frame is fine for learning but chatty for a real game — production code sends input at a fixed tick rate (or uses client prediction). Keep that in mind, but for this prototype the clarity is worth it: you can <em>see</em> the request → authoritative move → replicate flow directly.</p>
+                </div>
+            </section>
+
+            <section id="coins" class="lesson-section">
+                <h2>Step 3: Coins &amp; Pickups</h2>
+                <p>The coin is a trivial NetworkBehaviour carrying a value. The server spawns a field of them on start:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+
+public class Coin : NetworkBehaviour
+{
+    public int Value = 10;
+}
+
+public class CoinSpawner : NetworkBehaviour
+{
+    [SerializeField] GameObject coinPrefab;
+    [SerializeField] int count = 20;
+    [SerializeField] float range = 8f;
+
+    public override void OnNetworkSpawn()
+    {
+        if (!IsServer) return;   // ONLY the server spawns
+
+        for (int i = 0; i &lt; count; i++)
+        {
+            var pos = new Vector3(Random.Range(-range, range), 0.5f, Random.Range(-range, range));
+            var go  = Instantiate(coinPrefab, pos, Quaternion.identity);
+            go.GetComponent&lt;NetworkObject&gt;().Spawn();   // replicate to all clients
+        }
+    }
+}</code></pre>
+                <p>Pickup detection runs on the server via the player's trigger. Because movement is server-authoritative, the physics overlap happens on the server — so the trigger fires there, and we guard with <code>IsServer</code> to be safe:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+
+public class PlayerScore : NetworkBehaviour
+{
+    // server writes, everyone reads
+    public NetworkVariable&lt;int&gt; Score = new NetworkVariable&lt;int&gt;(
+        0, NetworkVariableReadPermission.Everyone, NetworkVariableWritePermission.Server);
+
+    void OnTriggerEnter(Collider other)
+    {
+        if (!IsServer) return;   // authoritative pickup only on the server
+
+        if (other.TryGetComponent(out Coin coin) &amp;&amp; coin.NetworkObject.IsSpawned)
+        {
+            Score.Value += coin.Value;        // NetworkVariable → replicates to all
+            coin.NetworkObject.Despawn();      // remove the coin for everyone
+        }
+    }
+}</code></pre>
+                <p>Notice there's no client-supplied number anywhere — the server reads the coin's own value, checks it's still spawned, awards points, and despawns it. A cheat-client can't fake a pickup because it can't run this code; it only ever <em>moves</em> (a validated request), and the server decides the rest.</p>
+            </section>
+
+            <section id="score" class="lesson-section">
+                <h2>Step 4: Synced Score &amp; UI</h2>
+                <p>The score is already a NetworkVariable, so the UI just subscribes to changes — no polling, and correct on every machine including late joiners:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+using TMPro;   // or UnityEngine.UI.Text
+
+public class ScoreLabel : NetworkBehaviour
+{
+    [SerializeField] TMP_Text label;
+    PlayerScore score;
+
+    public override void OnNetworkSpawn()
+    {
+        score = GetComponent&lt;PlayerScore&gt;();
+        score.Score.OnValueChanged += OnScoreChanged;
+        OnScoreChanged(0, score.Score.Value);   // init to current (late joiners)
+    }
+
+    public override void OnNetworkDespawn()
+    {
+        if (score != null) score.Score.OnValueChanged -= OnScoreChanged;
+    }
+
+    void OnScoreChanged(int previous, int current) =&gt;
+        label.text = $"{OwnerClientId}: {current}";
+}</code></pre>
+                <p>Each player object shows its own score above its head, updated the instant the server changes it — and every client sees every player's score, because the NetworkVariable replicates to all.</p>
+            </section>
+
+            <section id="play" class="lesson-section">
+                <h2>Step 5: Play It</h2>
+                <ol>
+                    <li>Build the project. Run one instance, click <strong>Host</strong>; run a second, click <strong>Client</strong> (connects to <code>127.0.0.1</code>).</li>
+                    <li>Move each avatar with WASD. Each window controls only its own player, but both avatars move in both windows — server-authoritative movement replicating.</li>
+                    <li>Drive over coins. They vanish for <em>everyone</em>, and the collector's score ticks up on <em>every</em> scoreboard.</li>
+                    <li>Confirm authority: nothing a client does changes shared state except through the server. That's a correct multiplayer game.</li>
+                </ol>
+                <div class="card card-warning">
+                    <h4>⚠️ Testing tip</h4>
+                    <p>The <strong>Multiplayer Play Mode</strong> package spins up multiple virtual players inside one Editor, so you can test host + client without making a build each time. Highly recommended for iterating on netcode.</p>
+                </div>
+            </section>
+
+            <section id="extend" class="lesson-section">
+                <h2>What You Built &amp; Extending</h2>
+                <div class="card card-success">
+                    <h4>✅ Every Module 6 concept, working together</h4>
+                    <p>Sessions and roles (6.1), NetworkObjects + auto-spawned players + ownership (6.2), a synced Score NetworkVariable (6.3), and a movement-request RPC with server validation (6.4) — assembled into a playable, cheat-resistant game. The authority discipline is the throughline: <em>server writes, clients request</em>.</p>
+                </div>
+                <ul>
+                    <li><strong>Win condition.</strong> Add a match timer and a server-side check that ends the round and broadcasts the winner with a <code>SendTo.ClientsAndHost</code> RPC.</li>
+                    <li><strong>Respawning coins.</strong> Have the server spawn a new coin whenever one is collected, keeping the field full.</li>
+                    <li><strong>Smoother movement.</strong> Send input at a fixed tick rate instead of every frame, or explore client prediction (a specialisation — see the finale's "where to go next").</li>
+                    <li><strong>Player names.</strong> A <code>FixedString32Bytes</code> NetworkVariable set on spawn, shown on the scoreboard.</li>
+                </ul>
+            </section>
+
+            <section id="quiz" class="lesson-section">
+                <h2>Quick Quiz</h2>
+                <div class="card quiz-container">
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> How does a client move its avatar in this prototype?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The owner sends a MoveRpc to the server, which applies the move; the server-authoritative NetworkTransform replicates the result.">A) It sends a <code>MoveRpc</code> to the server, which moves it and replicates via NetworkTransform</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A client writing shared state directly would break authority.">B) It sets its own <code>transform.position</code> directly and tells others</button>
+                            <button class="quiz-option" data-correct="false" data-hint="NetworkVariables carry state, not per-frame movement here.">C) It writes a position NetworkVariable each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Where does coin-pickup logic run, and why?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="If each client awarded points, they'd disagree and cheating would be trivial.">A) On each client, so it feels instant</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The trigger is guarded with IsServer so only the server awards score and despawns the coin — authoritative and cheat-resistant.">B) On the server (guarded by <code>IsServer</code>), which awards score and despawns the coin</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The owning client requests movement, but the server owns pickups.">C) On the coin's owning client</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why is the score a <code>NetworkVariable</code> rather than sent by RPC?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Score is persistent state a late joiner needs, so a NetworkVariable syncs the current value automatically and fires OnValueChanged.">A) It's persistent state late joiners need — the NetworkVariable syncs the current value automatically</button>
+                            <button class="quiz-option" data-correct="false" data-hint="RPCs are for momentary events and aren't retained for late joiners.">B) RPCs can't carry integers</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Both replicate; the difference is state vs event and late-joiner behaviour.">C) NetworkVariables are the only way to reach clients</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A correct multiplayer game is the four pieces working together: session/roles, spawning/ownership, NetworkVariables, and RPCs.</li>
+                        <li><strong>Movement</strong>: owner requests via <code>[Rpc(SendTo.Server)]</code>; the server moves; server-authoritative <code>NetworkTransform</code> replicates.</li>
+                        <li><strong>Spawning</strong>: only the server instantiates + <code>Spawn()</code>s coins; clients receive them by replication.</li>
+                        <li><strong>Pickups</strong>: validated on the server (trigger + <code>IsServer</code> guard); award a server-written <strong>Score</strong> NetworkVariable and despawn the coin for all.</li>
+                        <li><strong>UI</strong>: driven by <code>OnValueChanged</code>, correct on every machine including late joiners.</li>
+                        <li>The throughline is authority: <strong>clients request, the server decides, results replicate</strong>.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>That completes the Netcode pillar. The final pillar is about <em>your</em> productivity and shipping. <strong>Module 7: Editor Tooling &amp; Addressables</strong> begins with <strong>Lesson 7.1: Custom Inspectors &amp; Property Drawers</strong> — bending the Editor itself to your workflow.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🏆 A real multiplayer game</h3>
+                    <p>Players move, coins collect, scores sync — all server-authoritative and cheat-resistant. You've built genuine netcode from foundations to a finished loop.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_29.html" class="prev-lesson">← Previous: RPCs — Remote Procedure Calls</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_31.html" class="next-lesson">Next: Custom Inspectors &amp; Property Drawers →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

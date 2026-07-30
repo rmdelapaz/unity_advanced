@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Module 4 mini-project: bake a prefab, spawn tens of thousands of entities into a formation with a spawn system, and animate them all with a Burst IJobEntity — the complete DOTS/ECS pipeline, ending in a real Unity render of 24,000 entities.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 4.5: Simulating Thousands of Entities — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 4: DOTS / ECS</a></li>
+            <li aria-current="page">Lesson 4.5: Simulating Thousands of Entities</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🌌 Lesson 4.5: Mini-Project — Simulating Thousands of Entities</h1>
+                <p class="lead">Everything Module 4 taught, in one running scene. You'll bake a prefab, spawn <strong>tens of thousands of entities</strong> into a formation with a spawn system, and animate every one of them with a Burst-compiled <code>IJobEntity</code> — no GameObjects, no per-object <code>Update</code>. This is the moving, built-from-scratch version of the render that opened Lesson 4.1.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build</h2>
+                    <ul>
+                        <li>A baked <strong>entity prefab</strong> spawned in bulk from an authored <code>Spawner</code></li>
+                        <li>A <strong>spawn system</strong> that instantiates 24,000 entities into a sphere formation and colours them</li>
+                        <li>An <strong>orbit system</strong> (Burst <code>IJobEntity</code>, parallel) that spins the whole cloud every frame</li>
+                        <li>A scene that renders it all through <strong>Entities Graphics</strong> at full frame rate</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 90 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 4.1–4.4 (all of Module 4) and Module 3</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#goal" class="toc-link">The Goal</a></li>
+                        <li><a href="#step1" class="toc-link">Step 1: Components</a></li>
+                        <li><a href="#step2" class="toc-link">Step 2: Prefab &amp; Spawner (Baking)</a></li>
+                        <li><a href="#step3" class="toc-link">Step 3: The Spawn System</a></li>
+                        <li><a href="#step4" class="toc-link">Step 4: The Orbit System</a></li>
+                        <li><a href="#run" class="toc-link">Run It</a></li>
+                        <li><a href="#tuning" class="toc-link">Tuning &amp; Extending</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="goal" class="lesson-section">
+                <h2>The Goal</h2>
+                <p>Here's the target — a <strong>real Unity 6 capture</strong> of the finished scene: 24,000 entities spawned from one baked prefab, arranged on a sphere and tinted by latitude, all rendered together and spun by a single parallel system.</p>
+
+                <figure class="render-figure">
+                    <img src="images/ecs-swarm.png" alt="A large sphere made of tens of thousands of tiny coloured cubes, tinted from red at the top through green to blue at the bottom, floating against a sky — each cube a separate entity.">
+                    <figcaption>Figure 1: A real Unity 6 capture of the finished mini-project — <strong>24,000 entities</strong> instantiated from a baked prefab, positioned on a Fibonacci sphere and coloured by latitude, drawn via Entities Graphics. One Burst <code>IJobEntity</code> orbits the entire cloud each frame; this is a single frame of it.</figcaption>
+                </figure>
+
+                <p>The whole thing is three small scripts plus a scene. Because it's all entities and systems, it stays smooth where 24,000 GameObjects would crawl — the payoff of everything you've built.</p>
+            </section>
+
+            <section id="step1" class="lesson-section">
+                <h2>Step 1: Components</h2>
+                <p>Two data components: a <code>Spawner</code> singleton describing what and how many to spawn, and an <code>OrbitSpeed</code> the movement system reads.</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+
+public struct Spawner : IComponentData
+{
+    public Entity Prefab;   // the baked entity prefab to instantiate
+    public int Count;       // how many
+    public float Radius;    // sphere radius
+}
+
+public struct OrbitSpeed : IComponentData
+{
+    public float Value;     // radians/second the cloud rotates
+}</code></pre>
+            </section>
+
+            <section id="step2" class="lesson-section">
+                <h2>Step 2: Prefab &amp; Spawner (Baking)</h2>
+                <ol>
+                    <li>Make a <strong>Cube prefab</strong>. Give its material a URP/Lit shader with <em>Enable GPU Instancing</em> on (so per-entity colour works).</li>
+                    <li>Create a <strong>SubScene</strong> and add an empty GameObject <code>Spawner</code> to it.</li>
+                    <li>Add this authoring component and drag the cube prefab into its <em>prefab</em> slot.</li>
+                </ol>
+                <pre><code class="language-csharp">using Unity.Entities;
+using UnityEngine;
+
+public class SpawnerAuthoring : MonoBehaviour
+{
+    public GameObject prefab;
+    public int count = 24000;
+    public float radius = 45f;
+
+    class Baker : Baker&lt;SpawnerAuthoring&gt;
+    {
+        public override void Bake(SpawnerAuthoring authoring)
+        {
+            Entity entity = GetEntity(TransformUsageFlags.None);
+            AddComponent(entity, new Spawner
+            {
+                // bake the referenced prefab into its own entity
+                Prefab = GetEntity(authoring.prefab, TransformUsageFlags.Dynamic),
+                Count  = authoring.count,
+                Radius = authoring.radius
+            });
+        }
+    }
+}</code></pre>
+                <p>Baking turns the cube prefab into a renderable entity template and stores its handle on the <code>Spawner</code> singleton — exactly the entity-prefab pattern from Lesson 4.4.</p>
+            </section>
+
+            <section id="step3" class="lesson-section">
+                <h2>Step 3: The Spawn System</h2>
+                <p>This system runs <strong>once</strong>: it reads the <code>Spawner</code>, instantiates <code>Count</code> copies of the prefab through an <code>EntityCommandBuffer</code> (instantiation is a structural change), lays them out on a Fibonacci sphere, gives each an <code>OrbitSpeed</code>, and tints it by latitude. Then it disables itself.</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Collections;
+using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Rendering;      // URPMaterialPropertyBaseColor
+using Unity.Transforms;
+
+[BurstCompile]
+public partial struct SpawnSystem : ISystem
+{
+    [BurstCompile]
+    public void OnCreate(ref SystemState state) =&gt; state.RequireForUpdate&lt;Spawner&gt;();
+
+    [BurstCompile]
+    public void OnUpdate(ref SystemState state)
+    {
+        state.Enabled = false;                       // spawn once, then stop
+        var spawner = SystemAPI.GetSingleton&lt;Spawner&gt;();
+
+        var ecb = new EntityCommandBuffer(Allocator.Temp);
+        float golden = math.PI * (1f + math.sqrt(5f));   // golden angle
+
+        for (int i = 0; i &lt; spawner.Count; i++)
+        {
+            Entity e = ecb.Instantiate(spawner.Prefab);
+
+            // even points on a sphere (Fibonacci lattice)
+            float t   = (i + 0.5f) / spawner.Count;
+            float phi = math.acos(1f - 2f * t);
+            float th  = golden * i;
+            float sp  = math.sin(phi);
+            float3 dir = new float3(sp * math.cos(th), math.cos(phi), sp * math.sin(th));
+
+            ecb.SetComponent(e, LocalTransform.FromPositionRotationScale(
+                dir * spawner.Radius, quaternion.identity, 0.7f));
+            ecb.AddComponent(e, new OrbitSpeed { Value = 0.3f });
+
+            // colour by latitude: blue (bottom) → red (top)
+            float c = dir.y * 0.5f + 0.5f;
+            float4 col = math.lerp(new float4(0.15f, 0.35f, 0.95f, 1f),
+                                   new float4(0.95f, 0.25f, 0.15f, 1f), c);
+            ecb.AddComponent(e, new URPMaterialPropertyBaseColor { Value = col });
+        }
+
+        ecb.Playback(state.EntityManager);
+        ecb.Dispose();
+    }
+}</code></pre>
+                <p>Note everything in the loop is Burst-friendly <code>math</code> — no <code>UnityEngine.Color</code>, no managed calls — so the whole system compiles native. The <code>URPMaterialPropertyBaseColor</code> component is what Entities Graphics reads to tint each instance (it needs the material's GPU instancing, which is why we enabled it in Step 2).</p>
+            </section>
+
+            <section id="step4" class="lesson-section">
+                <h2>Step 4: The Orbit System</h2>
+                <p>Now the per-frame work. An <code>IJobEntity</code> rotates every entity's position (and rotation) around the Y axis, so the whole sphere spins as one — and it runs in parallel across every core, Burst-compiled:</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
+
+[BurstCompile]
+public partial struct OrbitJob : IJobEntity
+{
+    public float DeltaTime;
+
+    void Execute(ref LocalTransform transform, in OrbitSpeed orbit)
+    {
+        quaternion spin = quaternion.RotateY(orbit.Value * DeltaTime);
+        transform.Position = math.mul(spin, transform.Position);
+        transform.Rotation = math.mul(spin, transform.Rotation);
+    }
+}
+
+[BurstCompile]
+public partial struct OrbitSystem : ISystem
+{
+    [BurstCompile]
+    public void OnCreate(ref SystemState state) =&gt; state.RequireForUpdate&lt;OrbitSpeed&gt;();
+
+    [BurstCompile]
+    public void OnUpdate(ref SystemState state)
+    {
+        var job = new OrbitJob { DeltaTime = SystemAPI.Time.DeltaTime };
+        state.Dependency = job.ScheduleParallel(state.Dependency);   // no Complete() — ECS handles it
+    }
+}</code></pre>
+                <p>That's the entire runtime: 24,000 transforms updated every frame across all your cores, then handed to Entities Graphics to draw. There is no <code>MonoBehaviour.Update</code> anywhere in sight.</p>
+            </section>
+
+            <section id="run" class="lesson-section">
+                <h2>Run It</h2>
+                <ol>
+                    <li>Close the SubScene so its entities bake.</li>
+                    <li>Press Play. You'll see a slowly rotating sphere of thousands of coloured cubes — Figure 1, in motion.</li>
+                    <li>Open <strong>Window ▸ Entities ▸ Hierarchy</strong> and confirm the entity count (~24,001 including the spawner). Open the <strong>Systems</strong> window to see <code>SpawnSystem</code> (now disabled) and <code>OrbitSystem</code> ticking.</li>
+                    <li>Open the <a href="lesson_06.html">Profiler</a>: the <code>OrbitJob</code> spreads across the worker lanes each frame while the main thread stays thin — the whole point of ECS.</li>
+                </ol>
+                <div class="card card-warning">
+                    <h4>⚠️ If nothing renders</h4>
+                    <p>Make sure <strong>Entities Graphics</strong> is installed (Lesson 4.2) and the prefab has a <em>MeshRenderer</em> with a URP material — baking reads those to attach the render components. No colour variation? Confirm <em>Enable GPU Instancing</em> is ticked on the material, or the per-instance <code>URPMaterialPropertyBaseColor</code> is ignored.</p>
+                </div>
+            </section>
+
+            <section id="tuning" class="lesson-section">
+                <h2>Tuning &amp; Extending</h2>
+                <ul>
+                    <li><strong>Scale it up.</strong> Raise <code>count</code> to 100,000. It should still run smoothly — that headroom is exactly why ECS exists.</li>
+                    <li><strong>Give each entity its own motion.</strong> Add a per-entity <code>Velocity</code> and drift them outward, or a noise-based wander, instead of a rigid orbit.</li>
+                    <li><strong>Destroy on a condition.</strong> Add a <code>Lifetime</code> component that ticks down and have a system <code>DestroyEntity</code> via an ECB when it hits zero — practise structural changes at scale.</li>
+                    <li><strong>Spawn from input.</strong> Move spawning into a system that reads a key press and instantiates a burst each time, instead of once at load.</li>
+                </ul>
+                <div class="card card-success">
+                    <h4>✅ What you built — the whole stack</h4>
+                    <p>You used <strong>every</strong> Module 4 idea at once: components and archetypes (4.2), an <code>ISystem</code> with queries plus a parallel <code>IJobEntity</code> (4.3), and a baked entity prefab (4.4) — running on the data-oriented, Burst-compiled foundation from Module 3. That's DOTS end to end. Compare Figure 1 here with the wave field you hand-built in <a href="lesson_15.html">Lesson 3.5</a>: same data-oriented idea, now expressed as real entities the framework manages for you.</p>
+                </div>
+            </section>
+
+            <section id="quiz" class="lesson-section">
+                <h2>Quick Quiz</h2>
+                <div class="card quiz-container">
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why does <code>SpawnSystem</code> set <code>state.Enabled = false</code> at the top of <code>OnUpdate</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Spawning is a one-time setup; disabling the system after the first update stops it re-spawning every frame.">A) So it spawns the swarm once, not every frame</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't destroy the entities; it just stops the system running again.">B) To destroy the entities it just made</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Burst compilation is unrelated to enabling/disabling.">C) To trigger Burst compilation</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why is the instantiation done through an <code>EntityCommandBuffer</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="An ECB isn't about speed of a loop; it's about safety of structural changes.">A) It makes the spawn loop run faster</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Instantiate is a structural change; recording it into an ECB defers it to a safe point instead of mutating archetypes mid-iteration.">B) <code>Instantiate</code> is a structural change, so it's recorded and played back at a safe point</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Rendering is handled by Entities Graphics, not the ECB.">C) It renders the entities</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> In <code>OrbitSystem</code>, why is there no <code>Complete()</code> call after <code>ScheduleParallel</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Assigning the handle to state.Dependency lets ECS complete the job at the right time before any system that reads LocalTransform.">A) Assigning the handle to <code>state.Dependency</code> lets ECS complete it at the right moment</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The job does run — ECS just manages its completion for you.">B) The job never actually runs</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Calling Complete yourself would stall the main thread and lose the overlap.">C) Because you should always call <code>Complete()</code> immediately</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Author a <strong>Spawner</strong> that bakes a prefab into an entity template plus a count and formation.</li>
+                        <li>A run-once <strong>spawn system</strong> instantiates thousands via an <code>EntityCommandBuffer</code>, positions them, and adds per-entity data (including colour) — all Burst-compiled with <code>math</code>.</li>
+                        <li>A parallel <strong><code>IJobEntity</code></strong> animates every entity each frame; assign to <code>state.Dependency</code>, never <code>Complete()</code> yourself.</li>
+                        <li><strong>Entities Graphics</strong> renders the lot; <code>URPMaterialPropertyBaseColor</code> + GPU instancing gives per-entity colour.</li>
+                        <li>The result scales to tens (even hundreds) of thousands smoothly — the concrete payoff of the whole Performance &amp; DOTS pillar.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>That completes the Performance &amp; DOTS pillar. Next we turn to how those pixels actually get drawn. <strong>Module 5: Advanced Rendering</strong> takes you below Shader Graph — into HLSL, custom render passes, and compute shaders — starting with <strong>Lesson 5.1: The URP Frame &amp; the Frame Debugger</strong>.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🌌 Thousands, simulated</h3>
+                    <p>Bake, spawn, and move tens of thousands of entities with a handful of small scripts. You've now built the scale that DOTS promises — and you understand every layer under it.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_19.html" class="prev-lesson">← Previous: Baking — From GameObjects to Entities</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_21.html" class="next-lesson">Next: The URP Frame &amp; the Frame Debugger →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

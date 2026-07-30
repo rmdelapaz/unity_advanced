@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Async and await in Unity 6 with the new Awaitable type: how it differs from coroutines and Task, awaiting NextFrameAsync and WaitForSecondsAsync, switching to and from background threads, cancellation with CancellationToken and destroyCancellationToken, and the pitfalls of async void and work outliving a destroyed object.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 1.3: Async &amp; Await in Unity 6 — Awaitable — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 1: Advanced Architecture &amp; Async</a></li>
+            <li aria-current="page">Lesson 1.3: Async &amp; Await in Unity 6 — Awaitable</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>⏱️ Lesson 1.3: Async &amp; Await in Unity 6 — Awaitable</h1>
+                <p class="lead">Coroutines have carried Unity's "do this over several frames" needs for over a decade, and you used them fluently in Intermediate. But they're a closed system — they can't return values, can't be awaited from ordinary methods, handle exceptions awkwardly, and can't touch other threads. Unity 6 finally gives you first-class <code>async</code>/<code>await</code> that plays by the engine's rules, built around a new type: <strong><code>Awaitable</code></strong>. This lesson shows how it relates to coroutines and <code>Task</code>, how to await frames and seconds, how to hop on and off the main thread, and — most importantly — how to cancel cleanly so async work never outlives the object that started it.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain the limits of coroutines and where <code>async</code>/<code>await</code> is the better tool</li>
+                        <li>Contrast <code>Task</code>, coroutines, and Unity 6's <code>Awaitable</code></li>
+                        <li>Await frames and time with <code>Awaitable.NextFrameAsync()</code> and <code>Awaitable.WaitForSecondsAsync()</code></li>
+                        <li>Move work to a worker thread with <code>BackgroundThreadAsync()</code> and back with <code>MainThreadAsync()</code></li>
+                        <li>Cancel async work with <code>CancellationToken</code> and the built-in <code>destroyCancellationToken</code></li>
+                        <li>Avoid the classic traps: <code>async void</code>, swallowed exceptions, and work continuing after an object is destroyed</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Coroutines &amp; <code>IEnumerator</code> from Unity Intermediate; C# <code>async</code>/<code>await</code> basics</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#recap" class="toc-link">Coroutines Recap &amp; Their Limits</a></li>
+                        <li><a href="#task" class="toc-link">Task vs Coroutine vs Awaitable</a></li>
+                        <li><a href="#awaitable" class="toc-link">Meet Awaitable</a></li>
+                        <li><a href="#threads" class="toc-link">Switching Threads</a></li>
+                        <li><a href="#cancel" class="toc-link">Cancellation</a></li>
+                        <li><a href="#timeline" class="toc-link">A Frame Timeline</a></li>
+                        <li><a href="#pitfalls" class="toc-link">Pitfalls</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="recap" class="lesson-section">
+                <h2>Coroutines Recap &amp; Their Limits</h2>
+                <p>A quick refresher from Intermediate: a coroutine is a method returning <code>IEnumerator</code>, driven by <code>StartCoroutine</code>, that <code>yield</code>s to spread work across frames.</p>
+                <pre><code class="language-csharp">IEnumerator FadeOut()
+{
+    for (float t = 1f; t &gt; 0f; t -= Time.deltaTime)
+        yield return null;              // resume next frame
+    yield return new WaitForSeconds(1); // resume after a second
+}
+// StartCoroutine(FadeOut());</code></pre>
+                <p>Coroutines are great for simple frame-spread animation. But they hit walls the moment you need more:</p>
+                <ul>
+                    <li><strong>No return value.</strong> A coroutine can't hand back a result. Loading data means writing it into a field and hoping the caller checks later.</li>
+                    <li><strong>Not awaitable / composable.</strong> You can't <code>await</code> a coroutine from a normal method, or easily "run these three, then continue." Chaining is clumsy.</li>
+                    <li><strong>Exceptions are awkward.</strong> An exception thrown inside a coroutine doesn't propagate to a caller in a natural try/catch.</li>
+                    <li><strong>Single-threaded only.</strong> A coroutine always runs on the main thread. It can't offload heavy CPU work to a background thread.</li>
+                    <li><strong>Bound to a MonoBehaviour.</strong> <code>StartCoroutine</code> needs a live component; disable it and the coroutine dies quietly.</li>
+                </ul>
+                <p><code>async</code>/<code>await</code> answers every one of these — <em>if</em> you have an awaitable type the engine understands. That's what Unity 6 added.</p>
+            </section>
+
+            <section id="task" class="lesson-section">
+                <h2>Task vs Coroutine vs Awaitable</h2>
+                <p>C# already has <code>async</code>/<code>await</code> built on <code>Task</code>. So why did Unity add a new type instead of telling you to use <code>Task</code>? Because <code>Task</code> is a general-purpose .NET construct that knows nothing about Unity's frame loop or its main-thread rule, and it <strong>allocates</strong> — every <code>Task</code> is a heap object, which matters when you do this thousands of times (Module 2's garbage lesson will make you care). <code>Awaitable</code> is Unity's answer: an awaitable type wired into the player loop, poolable to avoid allocations, and aware that most engine APIs must run on the main thread.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🔁 Coroutine</h4>
+                        <p>Frame-spread, main-thread-only, no return value, no real exception flow, tied to a MonoBehaviour. Fine for simple sequences.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🧵 Task</h4>
+                        <p>Full <code>async</code>/<code>await</code>, returns values, real exceptions, can use threads — but allocates and is unaware of Unity's frame loop and main-thread constraint.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>⚡ Awaitable</h4>
+                        <p>Unity 6's awaitable: integrated with the player loop, low/zero allocation, understands main vs background thread, cancellable, returns values. The default for new async code.</p>
+                    </div>
+                </div>
+
+                <blockquote>
+                    <strong>💡 You can still use <code>Task</code>.</strong> Awaitable interoperates — you can <code>await</code> a <code>Task</code> and vice versa, and library APIs that return <code>Task</code> (a web request, a file read) work fine. Reach for <code>Awaitable</code> for engine-timed waits and thread hops; let <code>Task</code> handle genuinely external async I/O.
+                </blockquote>
+            </section>
+
+            <section id="awaitable" class="lesson-section">
+                <h2>Meet Awaitable</h2>
+                <p>An <code>async</code> method in Unity 6 returns <code>Awaitable</code> (or <code>Awaitable&lt;T&gt;</code> when it produces a value), and inside it you <code>await</code> the engine-timed operations you used to <code>yield</code>. The mapping from coroutine land is almost one-to-one:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+
+public class Fader : MonoBehaviour
+{
+    async Awaitable FadeOut()
+    {
+        for (float t = 1f; t &gt; 0f; t -= Time.deltaTime)
+            await Awaitable.NextFrameAsync();        // was: yield return null
+
+        await Awaitable.WaitForSecondsAsync(1f);     // was: yield return new WaitForSeconds(1)
+        Debug.Log("Faded.");
+    }
+}</code></pre>
+                <p>The everyday awaitables:</p>
+                <ul>
+                    <li><code>Awaitable.NextFrameAsync()</code> — resume next frame (the <code>yield return null</code> equivalent).</li>
+                    <li><code>Awaitable.WaitForSecondsAsync(seconds)</code> — resume after a delay in scaled time.</li>
+                    <li><code>Awaitable.EndOfFrameAsync()</code> — resume at end of frame, after rendering.</li>
+                    <li><code>Awaitable.FixedUpdateAsync()</code> — resume on the next physics step.</li>
+                </ul>
+                <p>Unlike a coroutine, an <code>async Awaitable&lt;T&gt;</code> can <em>return a value</em>, and the caller can <code>await</code> it in a plain method with normal try/catch. Here's an async loader that returns its result — the shape you'll build the bootstrapper's service init from in Lesson 1.5:</p>
+                <pre><code class="language-csharp">async Awaitable&lt;PlayerData&gt; LoadPlayerAsync()
+{
+    // Spread parsing across frames so the game doesn't hitch.
+    var data = new PlayerData();
+    for (int i = 0; i &lt; chunks.Length; i++)
+    {
+        data.Merge(Parse(chunks[i]));
+        await Awaitable.NextFrameAsync();   // yield a frame between chunks
+    }
+    return data;                            // a coroutine could never do this
+}
+
+// Caller — clean, with real exception handling:
+async void Start()
+{
+    try
+    {
+        PlayerData data = await LoadPlayerAsync();
+        Apply(data);
+    }
+    catch (System.Exception e) { Debug.LogException(e); }
+}</code></pre>
+            </section>
+
+            <section id="threads" class="lesson-section">
+                <h2>Switching Threads</h2>
+                <p>Here's the capability coroutines simply don't have. Nearly all Unity API calls must happen on the <strong>main thread</strong> — touch a <code>Transform</code> from a worker thread and you get an exception. But pure C# work (parsing, pathfinding math, procedural generation) doesn't need the main thread and shouldn't block it. <code>Awaitable</code> lets you hop across the boundary with two calls:</p>
+                <pre><code class="language-csharp">async Awaitable ProcessAsync()
+{
+    // ... on the main thread here (safe to touch Unity objects) ...
+
+    await Awaitable.BackgroundThreadAsync();
+    // Now on a thread-pool worker: do heavy CPU work, NO Unity API calls.
+    var result = CrunchNumbers();
+
+    await Awaitable.MainThreadAsync();
+    // Back on the main thread: safe to apply results to the scene.
+    transform.position = result;
+}</code></pre>
+                <p>The pattern is: <code>await Awaitable.BackgroundThreadAsync()</code> to leave the main thread for heavy work, then <code>await Awaitable.MainThreadAsync()</code> to return before touching anything in the scene. This is how you keep a 60&nbsp;FPS main thread while a big computation runs — impossible with coroutines, and cleaner than hand-managed <code>Thread</code>s or <code>Task.Run</code> plus a dispatcher.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Never touch Unity objects off the main thread</h4>
+                    <p>Between <code>BackgroundThreadAsync()</code> and <code>MainThreadAsync()</code> you're on a worker thread. Reading or writing a <code>Transform</code>, instantiating a prefab, or calling almost any <code>UnityEngine</code> API there throws (or worse, corrupts state). Do only plain-C#/math work in the background section, and always hop back before returning to the engine. For data-parallel math at scale, the Job System (Module 3) is the safer, Burst-accelerated route.</p>
+                </div>
+            </section>
+
+            <section id="cancel" class="lesson-section">
+                <h2>Cancellation</h2>
+                <p>Async work has a lifetime problem coroutines partly dodge: a coroutine dies with its MonoBehaviour, but an <code>async</code> method keeps running even after the object that started it is destroyed — leading to the dreaded "setting <code>transform</code> on a destroyed object" exception. The fix is <strong>cooperative cancellation</strong> with a <code>CancellationToken</code>.</p>
+                <p>Every <code>MonoBehaviour</code> in Unity 6 exposes a <strong><code>destroyCancellationToken</code></strong> that is automatically cancelled when the object is destroyed. Pass it into your awaits and the whole chain unwinds the moment the object goes away:</p>
+                <pre><code class="language-csharp">public class Loader : MonoBehaviour
+{
+    async Awaitable LoadLevelAsync()
+    {
+        // Token cancels automatically when THIS object is destroyed.
+        CancellationToken token = destroyCancellationToken;
+
+        for (int i = 0; i &lt; steps; i++)
+        {
+            token.ThrowIfCancellationRequested();      // bail out early if cancelled
+            DoStep(i);
+            await Awaitable.NextFrameAsync(token);      // await also observes the token
+        }
+    }
+}</code></pre>
+                <p>Two ways the token protects you: <code>token.ThrowIfCancellationRequested()</code> checks at the top of each iteration, and passing the token <em>into</em> the awaitable (<code>NextFrameAsync(token)</code>) makes the wait itself cancellable. On cancellation the method throws <code>OperationCanceledException</code>, which unwinds it cleanly — you typically let that exception propagate silently (it's expected), or catch it specifically.</p>
+                <p>For cancellation you trigger yourself (a "cancel loading" button, or timing out a request), create your own source and combine it with the destroy token:</p>
+                <pre><code class="language-csharp">using System.Threading;
+
+private CancellationTokenSource _cts;
+
+void BeginLoad()
+{
+    // Cancel if EITHER the user cancels OR the object is destroyed.
+    _cts = CancellationTokenSource.CreateLinkedTokenSource(destroyCancellationToken);
+    _ = RunAsync(_cts.Token);   // fire-and-forget an Awaitable-returning method
+}
+
+void CancelLoad() =&gt; _cts?.Cancel();</code></pre>
+
+                <div class="card card-success">
+                    <h4>✅ Habit to build</h4>
+                    <p>Thread <code>destroyCancellationToken</code> through <em>every</em> async method on a <code>MonoBehaviour</code>. It's nearly free and it eliminates the entire class of "async work touched a destroyed object" bugs — the number-one hazard when moving from coroutines to async.</p>
+                </div>
+            </section>
+
+            <section id="timeline" class="lesson-section">
+                <h2>A Frame Timeline</h2>
+                <p>It helps to see where an <code>async</code> method's pieces actually run across frames and threads. Below, a load routine yields a frame, offloads to a worker thread, then hops back to apply results — all without blocking the render loop.</p>
+
+                <div class="mermaid">
+sequenceDiagram
+    participant M as Main thread (player loop)
+    participant W as Background worker
+    Note over M: Frame 1 — call LoadAsync()
+    M-&gt;&gt;M: await NextFrameAsync()
+    Note over M: Frame 2 resumes here
+    M-&gt;&gt;W: await BackgroundThreadAsync()
+    Note over W: heavy CPU work<br/>(no Unity API)
+    W-&gt;&gt;M: await MainThreadAsync()
+    Note over M: apply results to scene<br/>(safe on main thread)
+    Note over M: object destroyed? →<br/>destroyCancellationToken cancels the chain
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: One async load across frames and threads. The method releases the main thread each <code>await</code> (so rendering continues), does its heavy lifting on a worker, and returns to the main thread before touching the scene. A cancellation token unwinds the whole chain if the object is destroyed mid-flight.</p>
+
+                <blockquote>
+                    <strong>💡 Awaits are suspension points.</strong> Each <code>await</code> is a spot where the method pauses and gives the frame back to Unity, resuming later — next frame, after a delay, or on another thread. Between awaits your code runs synchronously; the awaits are the seams where the engine (and your cancellation token) get a say.
+                </blockquote>
+            </section>
+
+            <section id="pitfalls" class="lesson-section">
+                <h2>Pitfalls</h2>
+                <p>Async is powerful and has sharp edges. Three cut most often.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ 1. Never <code>async void</code> (except event handlers)</h4>
+                    <p>An <code>async void</code> method can't be awaited and — worse — an exception thrown inside it can't be caught by the caller and may crash the app or vanish silently. Return <code>Awaitable</code> (or <code>Task</code>) so callers can await and observe exceptions. The one grudging exception is a top-level event handler like <code>async void Start()</code> or a UI button callback, where there's no caller to return to — and even there, wrap the body in try/catch.</p>
+                </div>
+
+                <div class="card card-warning">
+                    <h4>⚠️ 2. Swallowed exceptions in fire-and-forget</h4>
+                    <p>When you start an async method without awaiting it (<code>_ = DoAsync();</code>), any exception it throws goes nowhere — no stack trace, no log, just work that silently stopped. If you must fire-and-forget, do it through a helper that logs faults, or wrap the method body in try/catch so failures surface.</p>
+                </div>
+
+                <div class="card card-warning">
+                    <h4>⚠️ 3. Work continuing after the object is destroyed</h4>
+                    <p>The signature async bug: an <code>await</code> completes, execution resumes, and it touches a <code>Transform</code> on an object destroyed while it was suspended — <code>MissingReferenceException</code>. The fix is the previous section: pass <code>destroyCancellationToken</code> so the resume never happens. If you can't, at least guard with <code>if (this == null) return;</code> after long awaits (Unity's fake-null check).</p>
+                </div>
+
+                <p>Respect those three and async in Unity 6 is a clear upgrade over coroutines for anything beyond a trivial frame-spread: it returns values, composes, handles exceptions properly, and reaches other threads — all while staying friendly to the engine's frame loop.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Convert a coroutine to Awaitable</h3>
+                    <p><strong>Objective:</strong> Rewrite a coroutine as an async method and give it a return value it couldn't have before.</p>
+                    <ol>
+                        <li>Take a coroutine that "loads" over several frames (a loop with <code>yield return null</code>) and ends by setting a field.</li>
+                        <li>Rewrite it as <code>async Awaitable&lt;T&gt;</code>, replacing <code>yield return null</code> with <code>await Awaitable.NextFrameAsync(destroyCancellationToken)</code> and <em>returning</em> the result instead of writing a field.</li>
+                        <li>Call it from <code>async void Start()</code> with a try/catch, and use the returned value directly.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What improved</summary>
+                        <p>The async version returns its result (no shared field), propagates exceptions to the caller's try/catch, and — thanks to the destroy token — stops cleanly if the object is destroyed mid-load. All three are things the coroutine couldn't do. Note <code>Start</code> is the sanctioned <code>async void</code> because it's a top-level entry point, and you still wrapped its body in try/catch.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Offload and return</h3>
+                    <p>Write <code>async Awaitable ComputeAndApplyAsync()</code> that: (1) reads a start position from <code>transform</code> on the main thread; (2) awaits <code>BackgroundThreadAsync()</code> and does a deliberately heavy pure-C# loop (sum a million sines, say) on the worker; (3) awaits <code>MainThreadAsync()</code>; (4) applies the result to <code>transform.position</code>. Confirm the frame rate doesn't stall during the heavy loop, and that removing the <code>MainThreadAsync()</code> hop before touching <code>transform</code> throws.</p>
+                    <details>
+                        <summary>✅ Expected behavior</summary>
+                        <p>With the background hop, the heavy loop runs off the main thread and the game keeps rendering smoothly; the <code>MainThreadAsync()</code> return makes the final <code>transform</code> write legal. Delete that return hop and the <code>transform.position</code> assignment throws because you're still on a worker thread — a direct demonstration of the main-thread rule.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Which is a real limitation of coroutines that <code>Awaitable</code> removes?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Coroutines do spread work across frames — that's their strength, not a limit.">A) They can't spread work across multiple frames</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A coroutine can't return a value or run work on a background thread; Awaitable can do both.">B) They can't return a value or offload work to a background thread</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Coroutines don't allocate a Task; that's a Task concern.">C) They allocate a Task object every frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> You need to run heavy pure-C# math without stalling rendering, then apply the result to a Transform. What's the correct shape?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Hop to a worker with BackgroundThreadAsync, do the math there, then return with MainThreadAsync before touching the Transform.">A) <code>await BackgroundThreadAsync()</code>, do the math, <code>await MainThreadAsync()</code>, then set the Transform</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Touching a Transform on the worker thread throws — you must return to main first.">B) <code>await BackgroundThreadAsync()</code>, do the math, then set the Transform on the worker thread</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Doing heavy math on the main thread is exactly the stall you're trying to avoid.">C) Do all of it on the main thread inside a coroutine</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> What is <code>destroyCancellationToken</code> for?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't speed anything up; it's about lifetime.">A) It makes awaits resume faster</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It's cancelled automatically when the MonoBehaviour is destroyed, so async chains unwind instead of resuming into a destroyed object.">B) It cancels the async chain automatically when the MonoBehaviour is destroyed</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't create threads; CancellationToken signals cancellation.">C) It spawns a background thread for the method</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Why avoid <code>async void</code> for a normal (non-event-handler) method?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It compiles fine; the problem is behavior, not syntax.">A) It won't compile in Unity 6</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! An async void method can't be awaited and its exceptions can't be caught by the caller — they escape and may crash or vanish.">B) It can't be awaited and its exceptions escape the caller — they can crash or vanish silently</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Return type doesn't force a thread; that's BackgroundThreadAsync.">C) It always runs on a background thread</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Coroutines are fine for simple frame-spread work but can't return values, compose, handle exceptions cleanly, or use threads.</li>
+                        <li><code>Awaitable</code> is Unity 6's frame-loop-integrated, low-allocation awaitable — the default for new async code; <code>Task</code> still interops for external I/O.</li>
+                        <li>Await engine events with <code>NextFrameAsync()</code>, <code>WaitForSecondsAsync()</code>, <code>EndOfFrameAsync()</code>, <code>FixedUpdateAsync()</code>; <code>Awaitable&lt;T&gt;</code> can return a value.</li>
+                        <li>Hop threads with <code>BackgroundThreadAsync()</code> for heavy pure-C# work and <code>MainThreadAsync()</code> before touching any Unity object.</li>
+                        <li>Cancel cooperatively with <code>CancellationToken</code>; pass <code>destroyCancellationToken</code> so chains unwind when the object is destroyed.</li>
+                        <li>Avoid <code>async void</code> (except entry points), never let fire-and-forget swallow exceptions, and never resume into a destroyed object.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have structure (assemblies), wiring (DI), and time control (async). The last piece before the mini-project is a vocabulary of reusable <em>shapes</em>. In <strong>Lesson 1.4: Scaling Design Patterns — Command, State, Service Locator &amp; Event Bus</strong>, you'll add four patterns that keep large systems decoupled — including an event bus your async services can broadcast through.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>⏱️ Time, under control</h3>
+                    <p>Await frames, await seconds, cross threads, and cancel cleanly. In Lesson 1.5 this is exactly how the bootstrapper initializes each service in order before the game begins.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_02.html" class="prev-lesson">← Previous: Dependency Injection &amp; Inversion of Control</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_04.html" class="next-lesson">Next: Scaling Design Patterns →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

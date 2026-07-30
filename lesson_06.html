@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Drive Unity 6's Profiler like a professional: the CPU, GPU, Rendering and Memory modules; Timeline vs Hierarchy; the main, render and job threads; ProfilerMarker instrumentation; deep profiling vs targeted markers; and profiling a real Development Build on device.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 2.1: The Profiler in Depth — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 2: Performance Engineering</a></li>
+            <li aria-current="page">Lesson 2.1: The Profiler in Depth</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>📊 Lesson 2.1: The Profiler in Depth</h1>
+                <p class="lead">The first rule of performance work is not "make it fast" — it's <em>measure first</em>. Every guess you make about what's slow is wrong more often than it's right, and the fix you "know" you need often costs a week for a millisecond nobody would ever have noticed. The Unity Profiler is how you stop guessing. This lesson takes you deep into its modules, its two views, the threads it exposes, and the <code>ProfilerMarker</code> API you use to label your own code — so that when a frame spikes, you can read exactly why.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Navigate the Profiler window's key <strong>modules</strong> — CPU Usage, GPU, Rendering, and Memory — and know what each measures</li>
+                        <li>Switch between <strong>Timeline</strong> and <strong>Hierarchy</strong> views and pick the right one for the question you're asking</li>
+                        <li>Read the <strong>main</strong>, <strong>render</strong>, and <strong>job/worker</strong> thread lanes and see how they overlap</li>
+                        <li>Instrument your own methods with a <code>static readonly ProfilerMarker</code> and with <code>Profiler.BeginSample</code>/<code>EndSample</code></li>
+                        <li>Choose between <strong>Deep Profiling</strong> and <strong>targeted markers</strong>, and understand why deep profiling distorts timings</li>
+                        <li>Profile a <strong>Development Build on device</strong> instead of trusting editor numbers, and use the <strong>Profile Analyzer</strong> to compare captures</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Basic profiling from Unity Intermediate (you've opened the Profiler and read a frame-time graph)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#measure" class="toc-link">Measure First, Always</a></li>
+                        <li><a href="#modules" class="toc-link">The Profiler Modules</a></li>
+                        <li><a href="#window" class="toc-link">Reading the CPU Usage Window</a></li>
+                        <li><a href="#views" class="toc-link">Timeline vs Hierarchy</a></li>
+                        <li><a href="#threads" class="toc-link">Main, Render &amp; Job Threads</a></li>
+                        <li><a href="#markers" class="toc-link">Instrumenting Your Code</a></li>
+                        <li><a href="#deep" class="toc-link">Deep Profiling vs Targeted Markers</a></li>
+                        <li><a href="#device" class="toc-link">Profiling a Build on Device</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="measure" class="lesson-section">
+                <h2>Measure First, Always</h2>
+                <p>Performance engineering has one iron law: <strong>you cannot optimize what you have not measured</strong>. A game runs at 40&nbsp;FPS and every developer in the room has a theory — "it's the physics," "it's garbage collection," "it's too many draw calls." All three might be plausible, and all three might be wrong. The Profiler replaces the theories with numbers.</p>
+                <p>Just as important: it tells you when to <em>stop</em>. If your frame budget is 16.7&nbsp;ms (for 60&nbsp;FPS) and a system you were about to rewrite costs 0.2&nbsp;ms, the Profiler just saved you a week of pointless work. Optimization without measurement is superstition; the Profiler is how you make it engineering.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — frame budget</h4>
+                    <p>Your <strong>frame budget</strong> is the time you have to produce one frame: <code>1000&nbsp;/&nbsp;targetFPS</code> milliseconds. 60&nbsp;FPS = 16.7&nbsp;ms; 30&nbsp;FPS = 33.3&nbsp;ms; a 90&nbsp;Hz VR headset = 11.1&nbsp;ms. Everything the CPU and GPU do in a frame has to fit inside that window. The Profiler measures how much of it each piece of work consumes.</p>
+                </div>
+
+                <blockquote>
+                    <strong>💡 The 80/20 of profiling.</strong> Real performance problems are almost always concentrated: one method, one allocation, one over-drawn material accounts for the bulk of a spike. Your job is not to shave microseconds everywhere — it's to find the <em>one thing</em> that dominates a frame and fix that. The Profiler is a search tool for that one thing.</p>
+                </blockquote>
+            </section>
+
+            <section id="modules" class="lesson-section">
+                <h2>The Profiler Modules</h2>
+                <p>Open the Profiler with <strong>Window → Analysis → Profiler</strong>. Down the left edge is a stack of <strong>modules</strong>, each a separate real-time graph tracking one subsystem. You add and remove them with the <em>Profiler Modules</em> dropdown at the top-left. Four of them carry most of your investigation:</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🧠 CPU Usage</h4>
+                        <p>The one you'll live in. Shows where every millisecond of CPU time went this frame — scripts, physics, animation, rendering setup, garbage collection — broken down by category and, with markers, by method. This is where you diagnose <em>spikes</em>.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🎮 GPU Usage</h4>
+                        <p>Time the graphics card spent on the frame — shadows, opaque and transparent passes, post-processing. When the CPU is idle but frame time is still high, you're <strong>GPU-bound</strong>, and this is where you look.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🖼️ Rendering</h4>
+                        <p>Higher-level render statistics: <strong>SetPass calls</strong>, draw calls, batches, triangles, and vertices. This module is your first stop for the batching work in Lesson 2.4 — it tells you whether the SRP Batcher is doing its job.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>💾 Memory</h4>
+                        <p>A live view of total, reserved, and used memory, plus per-category GC allocations. It flags <em>how much</em> garbage you generate per frame; the dedicated Memory Profiler (Lesson 2.2) tells you <em>what</em> is holding memory.</p>
+                    </div>
+                </div>
+
+                <p>Other modules — Physics, Rendering threads, Audio, Video, Global Illumination, UI, and any custom ones — sit below these and light up when the relevant subsystem is doing work. You rarely need them all at once; add the two or three that match the symptom you're chasing and keep the graph readable.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Editor numbers are not build numbers</h4>
+                    <p>Everything in the Profiler while you're in Play mode includes the <em>editor's own overhead</em> — the Scene view, the Inspector repainting, editor-only allocations, and a non-optimized code path. The absolute times are inflated and sometimes misleading. Use the editor to find <em>relative</em> hot spots quickly, but confirm real timings in a <strong>Development Build</strong> (see the <a href="#device">device section</a> below).</p>
+                </div>
+            </section>
+
+            <section id="window" class="lesson-section">
+                <h2>Reading the CPU Usage Window</h2>
+                <p>The CPU Usage module has two stacked areas. Along the top is the <strong>module chart</strong> — a scrolling graph, one vertical slice per captured frame, colour-coded by category (scripts in blue, rendering in green, physics, animation, GC, and so on). A spike here is a tall, differently-coloured slice. Click any slice to freeze the capture on that frame; the lower area then shows the <strong>frame detail</strong> for exactly that frame.</p>
+                <p>That lower area is where the diagnosis happens, and it renders in one of two views — Timeline or Hierarchy — which we'll compare next. First, here's the whole window reconstructed so you know what you're looking at.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 920 620" role="img" aria-labelledby="profTitle profDesc">
+                        <title id="profTitle">The Unity Profiler CPU Usage window</title>
+                        <desc id="profDesc">A reconstruction of Unity's Profiler window. Across the top is a toolbar with a Record button, a Deep Profile toggle, a target dropdown reading Play Mode, and frame navigation. Below the toolbar, on the left, is a vertical list of profiler modules: CPU Usage highlighted, then GPU, Rendering, Memory, Physics, and Audio. To the right of the module list is the module chart: a scrolling area graph of stacked coloured bands across many frames, with one tall spike near the right marked as the selected frame by a vertical white line. A horizontal dashed line across the chart marks the 16.7 millisecond sixty-frames-per-second budget. Below the chart is the frame-detail area shown in Timeline view: three horizontal thread lanes labelled Main Thread, Render Thread, and Job Worker 0, each filled with coloured sample blocks of varying width. The Main Thread lane shows a wide block labelled PlayerLoop containing nested blocks Update dot ScriptRunBehaviourUpdate, then EnemyManager.Update which contains a very wide red-tinted child labelled FindObjectsByType, followed by Physics.Simulate and Rendering. The Render Thread lane shows Gfx.WaitForPresent and camera render blocks. The Job Worker lane shows two Burst job blocks running in parallel beneath the main thread.</desc>
+
+                        <rect x="0" y="0" width="920" height="620" rx="8" fill="#22262d"/>
+
+                        <!-- toolbar -->
+                        <rect x="12" y="12" width="896" height="34" rx="5" fill="#2b3038" stroke="#3a4149"/>
+                        <circle cx="34" cy="29" r="8" fill="#e0574c"/>
+                        <text x="34" y="33" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#fff">●</text>
+                        <text x="60" y="33" font-family="'Segoe UI',sans-serif" font-size="11" fill="#c9d4e6">Record</text>
+                        <rect x="112" y="19" width="104" height="20" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="164" y="33" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#dfe8ff">Deep Profile</text>
+                        <rect x="228" y="19" width="120" height="20" rx="4" fill="#2f3945" stroke="#45525f"/>
+                        <text x="288" y="33" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ff">Play Mode ▾</text>
+                        <text x="828" y="33" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">◄ Frame 812 ►</text>
+
+                        <!-- module list -->
+                        <rect x="12" y="54" width="150" height="220" rx="5" fill="#2b3038" stroke="#3a4149"/>
+                        <rect x="16" y="58" width="142" height="30" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="26" y="77" font-family="'Segoe UI',sans-serif" font-size="11.5" font-weight="700" fill="#ffffff">CPU Usage</text>
+                        <text x="26" y="106" font-family="'Segoe UI',sans-serif" font-size="11" fill="#aeb8c4">GPU Usage</text>
+                        <text x="26" y="132" font-family="'Segoe UI',sans-serif" font-size="11" fill="#aeb8c4">Rendering</text>
+                        <text x="26" y="158" font-family="'Segoe UI',sans-serif" font-size="11" fill="#aeb8c4">Memory</text>
+                        <text x="26" y="184" font-family="'Segoe UI',sans-serif" font-size="11" fill="#aeb8c4">Physics</text>
+                        <text x="26" y="210" font-family="'Segoe UI',sans-serif" font-size="11" fill="#aeb8c4">Audio</text>
+                        <text x="26" y="250" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#6f7b89">Profiler Modules ▾</text>
+
+                        <!-- module chart -->
+                        <rect x="170" y="54" width="738" height="220" rx="5" fill="#1b1f25" stroke="#3a4149"/>
+                        <text x="182" y="72" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">ms</text>
+                        <!-- 16.7ms budget line -->
+                        <line x1="176" y1="150" x2="900" y2="150" stroke="#e0a24c" stroke-width="1" stroke-dasharray="5 4"/>
+                        <text x="896" y="146" text-anchor="end" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e0a24c">16.7 ms · 60 FPS budget</text>
+                        <!-- stacked area frames -->
+                        <g>
+                            <!-- baseline bands: a repeating stack per frame, some tall spike -->
+                            <rect x="178" y="196" width="700" height="72" fill="#3a5c9a" opacity="0.85"/>
+                            <rect x="178" y="176" width="700" height="20" fill="#3f7d54" opacity="0.85"/>
+                            <rect x="178" y="166" width="700" height="10" fill="#8a6f3a" opacity="0.85"/>
+                            <!-- the spike: a tall coloured slab near right -->
+                            <rect x="690" y="104" width="26" height="164" fill="#b0483f" opacity="0.92"/>
+                            <rect x="690" y="92" width="26" height="12" fill="#3f7d54" opacity="0.9"/>
+                            <!-- selected frame line -->
+                            <line x1="703" y1="60" x2="703" y2="268" stroke="#ffffff" stroke-width="1.5" opacity="0.9"/>
+                            <text x="703" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#ffffff">selected</text>
+                        </g>
+                        <!-- legend -->
+                        <rect x="180" y="252" width="10" height="10" fill="#3a5c9a"/><text x="194" y="261" font-family="'Segoe UI',sans-serif" font-size="9" fill="#aeb8c4">Scripts</text>
+                        <rect x="248" y="252" width="10" height="10" fill="#3f7d54"/><text x="262" y="261" font-family="'Segoe UI',sans-serif" font-size="9" fill="#aeb8c4">Rendering</text>
+                        <rect x="330" y="252" width="10" height="10" fill="#8a6f3a"/><text x="344" y="261" font-family="'Segoe UI',sans-serif" font-size="9" fill="#aeb8c4">Physics</text>
+                        <rect x="400" y="252" width="10" height="10" fill="#b0483f"/><text x="414" y="261" font-family="'Segoe UI',sans-serif" font-size="9" fill="#aeb8c4">This frame's spike</text>
+
+                        <!-- frame detail: timeline -->
+                        <rect x="12" y="284" width="896" height="324" rx="5" fill="#1b1f25" stroke="#3a4149"/>
+                        <text x="24" y="304" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#dfe8ff">Frame 812 · Timeline</text>
+                        <text x="880" y="304" text-anchor="end" font-family="'Consolas',monospace" font-size="10.5" fill="#e0574c">31.4 ms</text>
+
+                        <!-- lane labels -->
+                        <text x="24" y="344" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9fb3d0">Main Thread</text>
+                        <text x="24" y="452" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9fb3d0">Render Thread</text>
+                        <text x="24" y="520" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9fb3d0">Job Worker 0</text>
+
+                        <!-- main thread lane -->
+                        <rect x="120" y="320" width="768" height="26" rx="2" fill="#2f4668" stroke="#3f5a86"/>
+                        <text x="130" y="337" font-family="'Consolas',monospace" font-size="9.5" fill="#cfe0ff">PlayerLoop</text>
+                        <!-- nested -->
+                        <rect x="128" y="350" width="150" height="22" rx="2" fill="#3a5c9a"/>
+                        <text x="136" y="365" font-family="'Consolas',monospace" font-size="9" fill="#dfe8ff">Update</text>
+                        <rect x="282" y="350" width="300" height="22" rx="2" fill="#3a5c9a"/>
+                        <text x="290" y="365" font-family="'Consolas',monospace" font-size="9" fill="#dfe8ff">EnemyManager.Update</text>
+                        <rect x="586" y="350" width="150" height="22" rx="2" fill="#8a6f3a"/>
+                        <text x="594" y="365" font-family="'Consolas',monospace" font-size="9" fill="#f0e6d2">Physics.Simulate</text>
+                        <rect x="740" y="350" width="140" height="22" rx="2" fill="#3f7d54"/>
+                        <text x="748" y="365" font-family="'Consolas',monospace" font-size="9" fill="#e6f0e6">Rendering</text>
+                        <!-- deeper nested: the offender -->
+                        <rect x="290" y="376" width="270" height="22" rx="2" fill="#b0483f"/>
+                        <text x="298" y="391" font-family="'Consolas',monospace" font-size="9" fill="#ffe3df">FindObjectsByType&lt;Enemy&gt;  ← the spike</text>
+                        <rect x="128" y="376" width="150" height="22" rx="2" fill="#33517f"/>
+                        <text x="136" y="391" font-family="'Consolas',monospace" font-size="9" fill="#cfe0ff">ScriptRunBehaviourUpdate</text>
+
+                        <!-- render thread lane -->
+                        <rect x="120" y="430" width="360" height="24" rx="2" fill="#37634a"/>
+                        <text x="130" y="446" font-family="'Consolas',monospace" font-size="9" fill="#e6f0e6">Gfx.WaitForPresentOnGfxThread</text>
+                        <rect x="484" y="430" width="404" height="24" rx="2" fill="#3f7d54"/>
+                        <text x="494" y="446" font-family="'Consolas',monospace" font-size="9" fill="#e6f0e6">Camera.Render · opaque + transparent</text>
+
+                        <!-- job worker lane -->
+                        <rect x="300" y="500" width="120" height="22" rx="2" fill="#5a4b8a"/>
+                        <text x="308" y="515" font-family="'Consolas',monospace" font-size="9" fill="#e6ddff">BurstJob A</text>
+                        <rect x="424" y="500" width="96" height="22" rx="2" fill="#5a4b8a"/>
+                        <text x="432" y="515" font-family="'Consolas',monospace" font-size="9" fill="#e6ddff">BurstJob B</text>
+
+                        <!-- time axis -->
+                        <line x1="120" y1="560" x2="888" y2="560" stroke="#454d57" stroke-width="1"/>
+                        <text x="120" y="576" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">0 ms</text>
+                        <text x="888" y="576" text-anchor="end" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">31.4 ms</text>
+                        <text x="504" y="594" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">width of a block = time it took · nesting = call stack</text>
+                    </svg>
+                    <figcaption>Figure 1: The Profiler CPU Usage window (reconstructed diagram). The <strong>module chart</strong> (top) scrolls one slice per frame; the selected frame's spike is the tall red slab. The <strong>frame detail</strong> (bottom), shown here in Timeline view, lays out three thread lanes. The wide red child on the Main Thread — <code>FindObjectsByType&lt;Enemy&gt;</code> nested inside <code>EnemyManager.Update</code> — is the culprit that pushed this frame to 31.4&nbsp;ms, well over the 16.7&nbsp;ms budget.</figcaption>
+                </figure>
+
+                <blockquote>
+                    <strong>💡 Why a diagram, not a screenshot?</strong> The Profiler is a UI Toolkit window whose live, scrolling content doesn't capture cleanly, so it's reconstructed here faithfully from the real layout and real marker names. The <em>data</em> it shows is genuine Unity terminology — <code>PlayerLoop</code>, <code>ScriptRunBehaviourUpdate</code>, <code>Gfx.WaitForPresentOnGfxThread</code> are the exact samples you'll see. That split — diagrams for tool windows, real renders for on-screen results — runs through this whole course.
+                </blockquote>
+            </section>
+
+            <section id="views" class="lesson-section">
+                <h2>Timeline vs Hierarchy</h2>
+                <p>The frame-detail area has a view dropdown, and the two views answer different questions. Learn to reach for the right one.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>📊 Timeline</h4>
+                        <p>A horizontal, per-thread <em>flame chart</em> — exactly what Figure 1 shows. Each block's <strong>width is its duration</strong> and its <strong>vertical nesting is the call stack</strong>. Timeline is unbeatable for seeing <em>when</em> things happen and <em>which thread</em> they're on: whether the render thread is stalling on the main thread, whether jobs overlap the frame, where the wide block is. Use it to <strong>locate a spike</strong>.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🗂️ Hierarchy</h4>
+                        <p>A sortable <em>table</em>: every sample aggregated by call path, with columns for Total&nbsp;%, Self&nbsp;ms, Calls, and GC&nbsp;Alloc. Sort by <strong>Self ms</strong> and the most expensive method floats to the top; sort by <strong>GC Alloc</strong> and your per-frame garbage sources appear. Use it to <strong>quantify and rank</strong> once you know roughly where to look.</p>
+                    </div>
+                </div>
+
+                <p>The typical workflow is: <strong>Timeline to find the spike, Hierarchy to measure it.</strong> You spot the fat red block on the main thread in Timeline, then flip to Hierarchy, sort by Self&nbsp;ms, and confirm the exact method and its call count. A method that costs 0.1&nbsp;ms but is called 4,000 times looks tiny in Timeline yet dominates the Hierarchy total — Hierarchy catches "death by a thousand cuts" that Timeline can hide.</p>
+
+                <div class="card card-success">
+                    <h4>✅ The two columns that matter most</h4>
+                    <p>In Hierarchy, <strong>Self ms</strong> is time spent <em>in that method itself</em>, excluding children — this is what you actually pay for that code. <strong>Total ms</strong> includes children. Chasing a high Total leads you <em>down</em> the tree to the real cost; a high Self <em>is</em> the cost. And <strong>GC Alloc</strong> &gt; 0 is a red flag we spend all of Lesson 2.3 eliminating.</p>
+                </div>
+            </section>
+
+            <section id="threads" class="lesson-section">
+                <h2>Main, Render &amp; Job Threads</h2>
+                <p>A modern Unity frame is not one sequence of work — it's several threads cooperating, and the Timeline shows each as its own lane. Understanding what runs where is the difference between fixing the right thread and optimizing one that was never the bottleneck.</p>
+                <ul>
+                    <li><strong>Main thread</strong> — runs the <code>PlayerLoop</code>: your <code>Update</code>/<code>LateUpdate</code> scripts, input, animation, physics stepping, and the CPU-side <em>setup</em> of rendering (culling, building draw commands). Almost all your gameplay code lives here, so this is usually where spikes originate.</li>
+                    <li><strong>Render thread</strong> — takes the draw commands the main thread produced and submits them to the graphics driver. If you see the render thread sitting in <code>Gfx.WaitForPresentOnGfxThread</code> or the main thread waiting on <code>Gfx.WaitForRenderThread</code>, the two are out of balance — one is starved while the other is swamped.</li>
+                    <li><strong>Job/worker threads</strong> — the <code>Job Worker</code> lanes where Burst-compiled jobs (Module 3) and Unity's internal parallel work run. When these lanes are busy <em>underneath</em> a shorter main thread, you're parallelizing well; when they're empty, you're leaving cores idle.</li>
+                </ul>
+
+                <p>This is also how you tell whether you're <strong>CPU-bound</strong> or <strong>GPU-bound</strong>. If the main thread is packed and the GPU module is low, the CPU is the wall. If the CPU threads finish early but frame time is still high — the main thread parked in a "wait for GPU" sample — the <em>GPU</em> is the wall, and no amount of C# tuning will help; you need the rendering work in Lesson 2.4 and Module 5 instead.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ VSync and the fake spike</h4>
+                    <p>If a frame shows a big block called <code>WaitForTargetFPS</code> or <code>Gfx.WaitForPresent</code>, that's usually <strong>not a problem</strong> — it's the CPU deliberately idling to hold VSync or your target frame rate. Don't "optimize" a wait. Toggle VSync off while profiling to see your true uncapped frame cost, then judge against your budget.</p>
+                </div>
+            </section>
+
+            <section id="markers" class="lesson-section">
+                <h2>Instrumenting Your Code</h2>
+                <p>Out of the box the Profiler labels engine work and your <code>MonoBehaviour.Update</code> methods, but inside a big method it just shows one blob. To see <em>which part</em> of your code costs what, you add your own <strong>markers</strong> — named samples that appear as labelled blocks in Timeline and as rows in Hierarchy.</p>
+                <p>The modern, low-overhead way is a <code>static readonly ProfilerMarker</code>. You create it once (so its name string is never re-allocated) and wrap the code you care about in an <code>Auto()</code> scope or a <code>Begin()</code>/<code>End()</code> pair:</p>
+
+                <pre><code class="language-csharp">using Unity.Profiling;
+using UnityEngine;
+
+public class EnemyManager : MonoBehaviour
+{
+    // Created ONCE. The name is what you'll see in the Profiler.
+    static readonly ProfilerMarker s_RetargetMarker =
+        new ProfilerMarker("EnemyManager.Retarget");
+
+    Enemy[] _enemies;
+
+    void Update()
+    {
+        // .Auto() opens the sample and closes it when the using-scope ends —
+        // exception-safe and impossible to forget to End().
+        using (s_RetargetMarker.Auto())
+        {
+            foreach (var e in _enemies)
+                e.RetargetNearestPlayer();
+        }
+    }
+}</code></pre>
+
+                <p>Now <code>EnemyManager.Retarget</code> shows up as its own block, and you can see exactly what the retarget loop costs versus everything else in <code>Update</code>. You can nest markers freely — a marker inside a marker becomes a child block in the Timeline, mirroring your call structure.</p>
+
+                <p>There's an older, simpler API you'll still meet in existing code and tutorials — <code>Profiler.BeginSample</code>/<code>EndSample</code>:</p>
+
+                <pre><code class="language-csharp">using UnityEngine.Profiling; // note: a different namespace
+
+void DoWork()
+{
+    Profiler.BeginSample("EnemyManager.ExpensivePass");
+    // ... work to measure ...
+    Profiler.EndSample();   // MUST be paired, or the Profiler tree corrupts
+}</code></pre>
+
+                <p>Both show up in the Profiler, but prefer <code>ProfilerMarker</code>: it's faster (no per-call string handling), it's stripped from release builds automatically, and the <code>using</code>/<code>Auto()</code> form can't leak an unpaired <code>End</code>. Reserve <code>BeginSample</code> for quick, throwaway probes.</p>
+
+                <blockquote>
+                    <strong>🔎 Why <code>static readonly</code>?</strong> If you wrote <code>new ProfilerMarker("...")</code> every frame inside <code>Update</code>, you'd allocate a string and a marker each time — the profiling would generate the very garbage you're hunting. Declaring it <code>static readonly</code> creates the marker once for the lifetime of the type. This is the same "allocate once, reuse" discipline that Lesson 2.3 is built on.
+                </blockquote>
+            </section>
+
+            <section id="deep" class="lesson-section">
+                <h2>Deep Profiling vs Targeted Markers</h2>
+                <p>Sometimes you don't yet know <em>which</em> method to mark. Unity offers <strong>Deep Profiling</strong> (the toggle in the Profiler toolbar): it instruments <em>every</em> managed method call automatically, giving you a complete call tree without adding a single marker.</p>
+                <p>It sounds ideal, and it's a trap if you misread it. Deep profiling injects a Begin/End around every method, which itself costs time — often <strong>2–5× the real runtime</strong>. It also inflates the cost of tiny, frequently-called methods out of all proportion. So the <em>absolute</em> numbers under deep profiling are fiction. What stays trustworthy is the <em>shape</em>: which branch of the tree is disproportionately fat, so you know where to place real markers.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-success pillar">
+                        <h4>✅ Deep Profiling — good for</h4>
+                        <ul>
+                            <li>Exploring an unfamiliar codebase where you don't know the hot path yet</li>
+                            <li>Getting a full managed call tree in one capture</li>
+                            <li>Finding the <em>branch</em> that dominates, relatively</li>
+                        </ul>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>⚠️ Deep Profiling — bad for</h4>
+                        <ul>
+                            <li>Trusting absolute millisecond values (they're inflated)</li>
+                            <li>Judging tiny methods (over-reported)</li>
+                            <li>Anything you'll quote as "this costs X&nbsp;ms"</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <p>The professional pattern is <strong>deep once, targeted after</strong>: run deep profiling briefly to find the suspicious region, place a handful of <code>ProfilerMarker</code>s around it, turn deep profiling off, and re-measure with those markers for numbers you can actually believe. Targeted markers have negligible overhead, so their timings are real.</p>
+            </section>
+
+            <section id="device" class="lesson-section">
+                <h2>Profiling a Build on Device</h2>
+                <p>The editor is a fine place to find <em>relative</em> hot spots, but it lies about absolutes — it runs a non-optimized code path, carries editor overhead, and (crucially) runs on your beefy dev machine, not the mid-range phone or console your players own. The only numbers that count for shipping decisions come from a <strong>Development Build running on the target device</strong>.</p>
+                <p>The workflow:</p>
+                <ol>
+                    <li>In <strong>Build Profiles / Build Settings</strong>, tick <strong>Development Build</strong> and <strong>Autoconnect Profiler</strong> (or connect manually afterward).</li>
+                    <li>Build and run on the actual device.</li>
+                    <li>In the Profiler's target dropdown (the one reading "Play Mode" in Figure 1), select the running player instead of the editor.</li>
+                    <li>Capture there. These timings reflect optimized IL2CPP/Burst code on real hardware — your ground truth.</li>
+                </ol>
+
+                <p>Development builds keep the marker names and deep-profiling capability of the editor while running the real optimized pipeline, so your <code>ProfilerMarker</code>s still show up. A <em>release</em> build strips them for maximum speed — which is why you profile the development build, not the shipping one.</p>
+
+                <div class="card card-accent">
+                    <h4>📦 The Profile Analyzer package</h4>
+                    <p>The Profiler shows one capture at a time; comparing "before" and "after" by eye across two captures is error-prone. Install the <strong>Profile Analyzer</strong> package (Package Manager). It ingests a whole <em>range</em> of captured frames and gives you median, mean, and percentile timings per marker — and, powerfully, lets you load <em>two</em> data sets and <strong>diff</strong> them. Profile before your change, profile after, and the Analyzer tells you exactly which markers got faster or slower, and by how much. That is how you prove an optimization worked instead of hoping it did — and it's the tool we lean on in the Lesson 2.5 mini-project.</p>
+                </div>
+
+                <blockquote>
+                    <strong>💡 Frame Timing over averages.</strong> "Average FPS" hides the frames that ruin a game — the occasional 60&nbsp;ms hitch in a sea of smooth 16&nbsp;ms frames. Profile percentiles (the Analyzer's 95th/99th) and hunt the <em>worst</em> frames, not the mean. A game that averages 60&nbsp;FPS but stutters every few seconds feels worse than a steady 45.
+                </blockquote>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Mark and measure a hot loop</h3>
+                    <p><strong>Objective:</strong> Instrument real code and read the result in both views.</p>
+                    <p>In any project, create a <code>MonoBehaviour</code> that does obviously heavy work every frame — for example, a loop that calls <code>transform.Find</code> or allocates a <code>new List&lt;int&gt;()</code> a few thousand times in <code>Update</code>. Then:</p>
+                    <ol>
+                        <li>Wrap the heavy loop in a <code>static readonly ProfilerMarker</code> called <code>"Stress.HeavyLoop"</code> using <code>.Auto()</code>.</li>
+                        <li>Enter Play mode, open the Profiler, and find a spiking frame in the CPU module chart.</li>
+                        <li>In <strong>Timeline</strong>, locate your <code>Stress.HeavyLoop</code> block on the Main Thread. Note its width.</li>
+                        <li>Switch to <strong>Hierarchy</strong>, sort by <strong>Self ms</strong>, then by <strong>GC Alloc</strong>. Record both numbers for your marker.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What you should observe</summary>
+                        <p>Your marker appears as a named block in Timeline whose width tracks the loop's cost, and as a sortable row in Hierarchy. If your loop allocated (the <code>new List</code> version), the <strong>GC Alloc</strong> column is non-zero — that's the garbage we eliminate in Lesson 2.3. If it only did <code>transform.Find</code> work, Self&nbsp;ms is high but GC&nbsp;Alloc is near zero: a CPU cost, not a memory one. Recognizing which of the two you're looking at is half of performance work.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Deep vs targeted</h3>
+                    <p>Run the same scene twice: once with <strong>Deep Profiling</strong> on, once with it off but your marker in place. Compare the reported time for your loop between the two runs.</p>
+                    <details>
+                        <summary>✅ What you should observe</summary>
+                        <p>The deep-profiled run reports a noticeably <em>higher</em> time for the same loop — the instrumentation overhead is baked in. The targeted-marker run reports the real, lower cost. This is the concrete reason to trust markers over deep profiling for final numbers: deep profiling is a compass for direction, not a ruler for distance.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> You want to see <em>which thread</em> a stall is on and how work overlaps across the frame. Which Profiler view do you use?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Timeline is the per-thread flame chart — block width is duration, nesting is the call stack, and each thread has its own lane, so it shows exactly when and where work happens.">A) Timeline</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Hierarchy is a table aggregated by call path — great for ranking cost, but it doesn't show per-thread timing.">B) Hierarchy</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The Memory module tracks allocations, not thread timing.">C) The Memory module</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why should you declare a <code>ProfilerMarker</code> as <code>static readonly</code> rather than constructing it inside <code>Update</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Markers aren't thread-bound like that; the reason is about allocation.">A) Because markers only work on the render thread</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Constructing it every frame would allocate each time, generating the very garbage you're profiling for. Created once, it's reused for the type's lifetime.">B) So it's created once and reused, instead of allocating every frame</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Deep profiling is a separate toggle; it doesn't require static markers.">C) Because deep profiling requires static fields</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Deep Profiling reports your tiny helper method as costing 3&nbsp;ms, but a targeted marker around the same call reports 0.4&nbsp;ms. Which do you trust and why?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Deep profiling instruments every call and inflates timings, especially for small frequent methods.">A) The 3&nbsp;ms — deep profiling sees everything so it's more accurate</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Deep profiling's per-method instrumentation inflates absolute times (often 2–5×) and over-reports small methods. Targeted markers have negligible overhead, so 0.4 ms is the real cost.">B) The 0.4&nbsp;ms — deep profiling inflates absolute times; targeted markers are near-zero overhead</button>
+                            <button class="quiz-option" data-correct="false" data-hint="They measure the same code; the difference is instrumentation overhead, not a real change.">C) Neither — you can't compare two captures</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> The CPU threads all finish early, but frame time is still high and the main thread shows a big <code>Gfx.WaitForPresent</code> block. What does this tell you?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="If the CPU is idle and waiting, rewriting C# won't help — the wall is elsewhere.">A) Your scripts are too slow; optimize <code>Update</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The CPU finishing early and then waiting on the GPU is the signature of being GPU-bound — the fix is in rendering (Lesson 2.4 / Module 5), not C#.">B) You're likely GPU-bound — the CPU is idling while it waits on the graphics card</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A wait sample is the CPU idling on purpose; it's not itself the expensive work.">C) The wait sample is the bottleneck; optimize the wait</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong>Measure first.</strong> The Profiler replaces guesses with numbers and tells you when a "problem" is under budget and not worth fixing.</li>
+                        <li>The key modules are <strong>CPU Usage</strong> (where the milliseconds go), <strong>GPU</strong>, <strong>Rendering</strong> (SetPass/draw calls/batches), and <strong>Memory</strong> (per-frame GC).</li>
+                        <li>Use <strong>Timeline</strong> to locate a spike across threads and <strong>Hierarchy</strong> (sorted by Self&nbsp;ms and GC&nbsp;Alloc) to rank and quantify it.</li>
+                        <li>A frame runs across the <strong>main</strong>, <strong>render</strong>, and <strong>job</strong> threads; reading them tells you whether you're CPU-bound or GPU-bound.</li>
+                        <li>Instrument code with a <code>static readonly ProfilerMarker</code> and <code>.Auto()</code>; keep <code>Profiler.BeginSample</code> for quick probes only.</li>
+                        <li><strong>Deep profiling</strong> shows the shape of the call tree but inflates absolute times — use it to find where to place real markers, then trust the markers.</li>
+                        <li>Confirm real numbers in a <strong>Development Build on device</strong>, and use the <strong>Profile Analyzer</strong> to diff before/after captures.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>The CPU module tells you <em>how much</em> garbage you generate, but not <em>what</em> is squatting in memory or leaking over time. In <strong>Lesson 2.2: Hunting Memory — The Memory Profiler</strong>, we pick up the dedicated Memory Profiler: capturing snapshots, reading the tree map, comparing two captures to find a leak, and tracking down exactly what keeps an object alive.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧭 You can read a frame now</h3>
+                    <p>Module chart to find the spiking frame, Timeline to see which thread and where, Hierarchy to name and measure it, markers to zoom in, device to confirm. That loop — capture, locate, quantify, verify — is the core of every performance investigation in this module.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_05.html" class="prev-lesson">← Previous: A Game Bootstrapper with a Service Container</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_07.html" class="next-lesson">Next: Hunting Memory — The Memory Profiler →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="The C# Job System: write an IJob, move data into NativeArrays, schedule work onto Unity's worker threads, and complete it safely with JobHandle — turning a serial loop into multithreaded work.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 3.2: Your First Job — IJob &amp; Scheduling — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 3: The Job System &amp; Burst</a></li>
+            <li aria-current="page">Lesson 3.2: Your First Job — IJob &amp; Scheduling</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>⚙️ Lesson 3.2: Your First Job — IJob &amp; Scheduling</h1>
+                <p class="lead">Your game runs almost everything on one thread — the main thread — while the other seven or eleven cores in the machine sit idle. The <strong>C# Job System</strong> is Unity's safe way to put those cores to work. In this lesson you write a real job, hand it packed data, schedule it onto worker threads, and collect the result without a single race condition.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain what the Job System is and how it uses Unity's <strong>worker thread pool</strong></li>
+                        <li>Write an <code>IJob</code> — a struct whose fields are its data and whose <code>Execute()</code> is its work</li>
+                        <li>Move data into a <code>NativeArray</code> so a job can touch it safely</li>
+                        <li>Schedule a job, receive a <code>JobHandle</code>, and <code>Complete()</code> it</li>
+                        <li>Apply the golden rule — never touch a job's data between <code>Schedule</code> and <code>Complete</code></li>
+                        <li>Chain jobs with <strong>dependencies</strong></li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 3.1 (Data-Oriented Thinking)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#idle" class="toc-link">The Idle Cores Problem</a></li>
+                        <li><a href="#anatomy" class="toc-link">Anatomy of an IJob</a></li>
+                        <li><a href="#native" class="toc-link">Data Lives in NativeArrays</a></li>
+                        <li><a href="#schedule" class="toc-link">Schedule &amp; Complete</a></li>
+                        <li><a href="#goldenrule" class="toc-link">The Golden Rule</a></li>
+                        <li><a href="#dependencies" class="toc-link">Chaining with Dependencies</a></li>
+                        <li><a href="#timing" class="toc-link">Schedule Early, Complete Late</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="idle" class="lesson-section">
+                <h2>The Idle Cores Problem</h2>
+                <p>Unity's core loop is single-threaded by design: your <code>Update()</code>, physics step, and animation all run in sequence on the <strong>main thread</strong>. That's simple to reason about, but it means a heavy per-frame computation — 50,000 particles, a flow field, thousands of spatial-audio distance checks — blocks everything else while a modern CPU's other cores do nothing.</p>
+                <p>The <strong>C# Job System</strong> lets you package a chunk of work as a <em>job</em> and hand it to Unity's <strong>worker thread pool</strong> — a set of background threads Unity keeps warm, roughly one per CPU core. The scheduler spreads jobs across those threads, so eight cores can chew through the work in a fraction of the wall-clock time. Crucially, it does this <strong>safely</strong>: the system's job is to make multithreading approachable without the classic nightmares of race conditions and locks.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 320" role="img" aria-labelledby="threadsTitle threadsDesc">
+                        <title id="threadsTitle">Serial main-thread work versus jobs spread across worker threads</title>
+                        <desc id="threadsDesc">Top: one long bar on the main thread doing all the work serially. Bottom: the same work split into four short bars running at the same time across four worker threads, finishing in roughly a quarter of the wall-clock time, while the main thread is freed.</desc>
+                        <rect x="0" y="0" width="900" height="320" rx="8" fill="#22262d"/>
+
+                        <text x="20" y="32" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ff9a9a">Without jobs — everything on the main thread</text>
+                        <text x="20" y="66" font-family="'Consolas',monospace" font-size="12" fill="#aeb8c4">main</text>
+                        <rect x="70" y="52" width="720" height="26" rx="4" fill="#8a4d4d" stroke="#6b3a3a"/>
+                        <text x="430" y="70" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#fff">50,000 updates — one long serial pass (blocks the frame)</text>
+                        <line x1="70" y1="92" x2="790" y2="92" stroke="#54627a" stroke-width="1"/>
+                        <text x="790" y="106" text-anchor="end" font-family="'Consolas',monospace" font-size="11" fill="#8f9aa8">time →</text>
+
+                        <text x="20" y="150" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#9be6b0">With jobs — split across worker threads</text>
+                        <g font-family="'Consolas',monospace" font-size="12" fill="#aeb8c4">
+                            <text x="20" y="184">main</text><text x="20" y="216">worker 1</text><text x="20" y="240">worker 2</text><text x="20" y="264">worker 3</text><text x="20" y="288">worker 4</text>
+                        </g>
+                        <rect x="110" y="170" width="70" height="20" rx="3" fill="#4b6b8a" stroke="#33465c"/>
+                        <text x="145" y="185" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#fff">Schedule</text>
+                        <rect x="300" y="170" width="70" height="20" rx="3" fill="#4b6b8a" stroke="#33465c"/>
+                        <text x="335" y="185" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#fff">Complete</text>
+                        <rect x="180" y="204" width="120" height="18" rx="3" fill="#4e8a5b" stroke="#356140"/>
+                        <rect x="180" y="228" width="120" height="18" rx="3" fill="#4e8a5b" stroke="#356140"/>
+                        <rect x="180" y="252" width="120" height="18" rx="3" fill="#4e8a5b" stroke="#356140"/>
+                        <rect x="180" y="276" width="120" height="18" rx="3" fill="#4e8a5b" stroke="#356140"/>
+                        <text x="240" y="216" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#fff">12,500</text>
+                        <text x="240" y="240" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#fff">12,500</text>
+                        <text x="240" y="264" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#fff">12,500</text>
+                        <text x="240" y="288" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#fff">12,500</text>
+                        <line x1="300" y1="160" x2="300" y2="300" stroke="#7fd48c" stroke-width="1.5" stroke-dasharray="4 4"/>
+                        <text x="470" y="240" font-family="'Segoe UI',sans-serif" font-size="12" fill="#7fd48c">same work, ~¼ the wall-clock time —</text>
+                        <text x="470" y="258" font-family="'Segoe UI',sans-serif" font-size="12" fill="#7fd48c">and the main thread is free meanwhile</text>
+                    </svg>
+                    <figcaption>Figure 1: A job splits one serial pass across the worker pool. The main thread schedules the work, does other things, then completes it once the workers finish.</figcaption>
+                </figure>
+            </section>
+
+            <section id="anatomy" class="lesson-section">
+                <h2>Anatomy of an IJob</h2>
+                <p>A job is a <strong>struct</strong> that implements a job interface. The simplest is <code>IJob</code>: it runs once, on one worker thread. Its <em>fields are its input and output</em>, and its <code>Execute()</code> method is the work:</p>
+                <pre><code class="language-csharp">using Unity.Collections;
+using Unity.Jobs;
+using Unity.Mathematics;
+
+// A job is a struct. Its fields are the ONLY data it may touch.
+struct MoveJob : IJob
+{
+    public float deltaTime;                 // plain value, copied in
+    public NativeArray&lt;float3&gt; positions;   // shared buffer it reads + writes
+    [ReadOnly] public NativeArray&lt;float3&gt; velocities;  // read-only input
+
+    public void Execute()
+    {
+        for (int i = 0; i &lt; positions.Length; i++)
+            positions[i] += velocities[i] * deltaTime;
+    }
+}</code></pre>
+                <p>Notice what's <em>not</em> here: no <code>MonoBehaviour</code>, no references to scene objects, no calls into the Unity API. A job is a self-contained bundle of blittable data and pure logic. That restriction is exactly what lets Unity run it on another thread safely — there's nothing shared to trip over except the containers you explicitly hand it.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Jobs can't touch managed objects or the Unity API</h4>
+                    <p>Inside <code>Execute()</code> you cannot use <code>GameObject</code>, <code>Transform</code>, <code>Debug.Log</code> (mostly), managed arrays, or reference-type fields. A job sees only <strong>blittable value types</strong> and <strong>NativeContainers</strong>. If you need transform data, you copy it into a <code>NativeArray&lt;float3&gt;</code> first and copy results back after — or you use ECS (Module 4), which stores it that way to begin with.</p>
+                </div>
+            </section>
+
+            <section id="native" class="lesson-section">
+                <h2>Data Lives in NativeArrays</h2>
+                <p>A job can't take an ordinary C# <code>float3[]</code> — managed arrays live on the garbage-collected heap and can't be safely shared across threads. Instead the Job System uses <strong>NativeContainers</strong>, the most common being <code>NativeArray&lt;T&gt;</code>: a fixed-size, unmanaged (GC-free) buffer of blittable values that Unity can track across threads. You allocate one, fill it, hand it to the job, and (critically) <strong>dispose it</strong> when done:</p>
+                <pre><code class="language-csharp">int count = 50000;
+// Allocator.TempJob = short-lived, for data handed to a job this frame.
+var positions  = new NativeArray&lt;float3&gt;(count, Allocator.TempJob);
+var velocities = new NativeArray&lt;float3&gt;(count, Allocator.TempJob);
+// ... fill them from your data ...
+
+var job = new MoveJob {
+    deltaTime  = Time.deltaTime,
+    positions  = positions,
+    velocities = velocities
+};</code></pre>
+                <p>NativeContainers are their own topic — allocators, the safety system, and leak detection — and they get the full treatment in <a href="lesson_13.html">Lesson 3.3</a>. For now, the mental model is: <strong>a <code>NativeArray</code> is a <code>T[]</code> you're allowed to share with a job, and that <em>you</em> are responsible for freeing.</strong></p>
+            </section>
+
+            <section id="schedule" class="lesson-section">
+                <h2>Schedule &amp; Complete</h2>
+                <p>You don't call <code>Execute()</code> yourself. You <strong>schedule</strong> the job, which queues it on the worker pool and immediately returns a <strong>JobHandle</strong> — a receipt you use to wait for it. Calling <code>Complete()</code> on that handle blocks the main thread until the job has finished, after which its results are safe to read:</p>
+                <pre><code class="language-csharp">// Queue the job onto a worker thread — returns instantly.
+JobHandle handle = job.Schedule();
+
+// ... the main thread is free here to do other work ...
+
+// Block until the job is done; now the data is safe to touch.
+handle.Complete();
+
+// Read results back out, then release the native memory.
+for (int i = 0; i &lt; positions.Length; i++)
+    myTransforms[i].position = positions[i];
+
+positions.Dispose();
+velocities.Dispose();</code></pre>
+                <p>Between <code>Schedule()</code> and <code>Complete()</code>, the job may be running on another thread — so the data it owns is off-limits to you. <code>Complete()</code> is the synchronisation point that hands ownership back.</p>
+
+                <div class="mermaid">
+flowchart LR
+    A["Allocate &amp; fill<br/>NativeArrays"] --> B["job.Schedule()<br/>→ JobHandle"]
+    B --> C["main thread does<br/>other work"]
+    B -. runs on worker .-> W["Execute()"]
+    C --> D["handle.Complete()<br/>(wait for worker)"]
+    W --> D
+    D --> E["read results<br/>+ Dispose()"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 2: The lifecycle. Schedule hands work to a worker; the main thread is free until Complete synchronises and returns the data.</p>
+            </section>
+
+            <section id="goldenrule" class="lesson-section">
+                <h2>The Golden Rule</h2>
+                <p>There is one rule that prevents the entire category of multithreading bugs:</p>
+                <div class="card card-accent" style="text-align:center;">
+                    <h3>Never read or write a job's data between <code>Schedule()</code> and <code>Complete()</code>.</h3>
+                </div>
+                <p>While the job is in flight, its <code>NativeArray</code>s belong to the worker thread. If the main thread also pokes at them, you have a data race — the exact bug the Job System exists to prevent. And it <em>does</em> prevent it: Unity's <strong>safety system</strong> tracks who owns each container and throws a clear <code>InvalidOperationException</code> the moment you break the rule, instead of letting you ship a heisenbug. You get told off immediately, in the editor, with a message that names the container.</p>
+                <p>The takeaway: schedule your work, leave its data alone, and only touch it again after <code>Complete()</code>. The safety system has your back while you learn the discipline.</p>
+            </section>
+
+            <section id="dependencies" class="lesson-section">
+                <h2>Chaining with Dependencies</h2>
+                <p>Real frames have jobs that depend on each other — compute forces, <em>then</em> integrate velocities, <em>then</em> move positions. You express "B must wait for A" by passing A's handle into B's <code>Schedule()</code>:</p>
+                <pre><code class="language-csharp">JobHandle forcesHandle = forcesJob.Schedule();
+
+// integrateJob won't start until forcesJob is done — pass the dependency.
+JobHandle integrateHandle = integrateJob.Schedule(forcesHandle);
+
+// moveJob waits for integrate.
+JobHandle moveHandle = moveJob.Schedule(integrateHandle);
+
+// Completing the last handle completes the whole chain.
+moveHandle.Complete();</code></pre>
+                <p>The scheduler now knows the ordering and guarantees each job sees the previous one's finished output — while still running <em>independent</em> chains in parallel on other workers. Dependencies are also how the safety system reasons about who may touch a container when: if two jobs write the same array, you must make one depend on the other, or Unity refuses to schedule them.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Pro Tip</h4>
+                    <p><code>JobHandle.CombineDependencies(a, b, c)</code> merges several handles into one, for when a job depends on <em>all</em> of them. And <code>JobHandle.ScheduleBatchedJobs()</code> nudges the scheduler to start queued jobs immediately rather than at the next sync point.</p>
+                </div>
+            </section>
+
+            <section id="timing" class="lesson-section">
+                <h2>Schedule Early, Complete Late</h2>
+                <p>The Job System only buys you time if the workers actually run <em>while the main thread does something else</em>. Scheduling a job and completing it on the very next line gives you the overhead of threading with none of the benefit — the main thread just waits.</p>
+                <p>The idiomatic pattern is <strong>schedule as early as possible, complete as late as possible</strong>. A common shape: schedule heavy jobs at the <em>start</em> of the frame (e.g. in <code>Update</code>), let the rest of your game logic run, then complete them at the <em>end</em> (e.g. in <code>LateUpdate</code>) when you finally need the results. The wider that gap, the more free parallelism you get.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Don't complete a job the frame after you schedule it — usually</h4>
+                    <p>A job whose results you don't need this frame <em>can</em> span frames, but a <code>NativeArray</code> allocated with <code>Allocator.TempJob</code> is expected to live at most a few frames, and leaving jobs uncompleted for long stretches complicates the safety system's bookkeeping. For per-frame work, complete within the same frame. For genuinely long-running background work, that's a more advanced pattern we flag but don't rely on here.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Write a distance job</h3>
+                    <p><strong>Objective:</strong> Build and run a complete job end to end.</p>
+                    <ol>
+                        <li>Write an <code>IJob</code> struct <code>DistanceJob</code> with a <code>[ReadOnly] NativeArray&lt;float3&gt; points</code>, a <code>float3 target</code>, and a <code>NativeArray&lt;float&gt; results</code>.</li>
+                        <li>In <code>Execute()</code>, fill <code>results[i] = math.distance(points[i], target)</code>.</li>
+                        <li>In a MonoBehaviour, allocate the arrays (<code>Allocator.TempJob</code>), fill <code>points</code>, schedule the job, <code>Complete()</code>, read <code>results</code>, then <code>Dispose()</code> both arrays.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Fields you only read should be marked <code>[ReadOnly]</code> — it lets the safety system allow other jobs to read the same array simultaneously. Forgetting <code>Dispose()</code> triggers a leak warning in the console a few frames later, naming the allocation.</p>
+                    </details>
+                    <details>
+                        <summary>✅ Solution sketch</summary>
+                        <pre><code class="language-csharp">struct DistanceJob : IJob {
+    [ReadOnly] public NativeArray&lt;float3&gt; points;
+    public float3 target;
+    public NativeArray&lt;float&gt; results;
+    public void Execute() {
+        for (int i = 0; i &lt; points.Length; i++)
+            results[i] = math.distance(points[i], target);
+    }
+}
+// caller:
+var pts = new NativeArray&lt;float3&gt;(n, Allocator.TempJob);
+var res = new NativeArray&lt;float&gt;(n, Allocator.TempJob);
+/* fill pts */
+var h = new DistanceJob { points = pts, target = t, results = res }.Schedule();
+h.Complete();
+/* use res */
+pts.Dispose(); res.Dispose();</code></pre>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why must a job be a <code>struct</code> whose fields are only blittable values and NativeContainers?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Structs vs classes isn't about syntax preference here.">A) Because Unity dislikes classes</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! With no shared managed state, the job can run on another thread safely — there's nothing to race on but the containers you hand it.">B) So it has no shared managed state to race on, making it safe to run on a worker thread</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Structs can be large; that's not the reason.">C) Because structs are always smaller than classes</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What does <code>job.Schedule()</code> return, and what does it do?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Schedule doesn't run Execute inline; it queues it.">A) It runs Execute() immediately on the main thread and returns void</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Schedule queues the job on a worker and returns a JobHandle you later Complete().">B) A JobHandle; it queues the job on a worker thread and returns instantly</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It returns a handle, not the results.">C) The finished results array</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> You schedule a job, then immediately read its <code>NativeArray</code> before calling <code>Complete()</code>. What happens?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The safety system detects the violation and throws an InvalidOperationException naming the container.">A) The safety system throws an exception — you broke the golden rule</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Unity catches this for you rather than letting it slide.">B) It silently returns stale data with no warning</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It won't crash the editor; it throws a clear, catchable error.">C) The editor crashes instantly</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>The <strong>Job System</strong> runs work on Unity's <strong>worker thread pool</strong> so idle cores share the load safely.</li>
+                        <li>An <strong><code>IJob</code></strong> is a <code>struct</code>; its fields are its data, <code>Execute()</code> is its work, and it may touch only blittable values + NativeContainers.</li>
+                        <li>Job data lives in <strong><code>NativeArray</code></strong>s (GC-free, thread-shareable) that <em>you</em> must <code>Dispose()</code>.</li>
+                        <li><code>Schedule()</code> returns a <strong><code>JobHandle</code></strong>; <code>Complete()</code> waits for the worker and hands the data back.</li>
+                        <li><strong>Golden rule:</strong> never touch a job's data between <code>Schedule</code> and <code>Complete</code> — the safety system enforces it.</li>
+                        <li>Express ordering with <strong>dependencies</strong> (<code>Schedule(handle)</code>); schedule early, complete late to maximise parallelism.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You leaned on <code>NativeArray</code> and <code>Allocator.TempJob</code> without really meeting them. In <strong>Lesson 3.3: NativeContainers &amp; the Safety System</strong> we go deep on native memory — allocators, <code>[ReadOnly]</code>/<code>[WriteOnly]</code>, leak detection, and the rules that keep parallel jobs honest.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>⚙️ You've gone multithreaded</h3>
+                    <p>Struct + fields + <code>Execute</code>, then Schedule/Complete around work you leave alone. That single shape scales from one background task to the parallel jobs and ECS systems in the rest of this course.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_11.html" class="prev-lesson">← Previous: Data-Oriented Thinking</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_13.html" class="next-lesson">Next: NativeContainers &amp; the Safety System →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

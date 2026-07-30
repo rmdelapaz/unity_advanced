@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Data-oriented design: why laying data out for the CPU cache — struct-of-arrays over array-of-structs — is the foundation of the Job System, Burst, and DOTS. The mindset that makes Unity 6 fast.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 3.1: Data-Oriented Thinking — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 3: The Job System &amp; Burst</a></li>
+            <li aria-current="page">Lesson 3.1: Data-Oriented Thinking</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧠 Lesson 3.1: Data-Oriented Thinking</h1>
+                <p class="lead">Modules 3 and 4 are where Unity gets <em>fast</em> — jobs, Burst, and DOTS. But none of those tools help unless you first change how you think about your game's data. This lesson has almost no Unity-specific API in it; instead it rewires the instinct that makes every technique that follows pay off. It's the shortest lesson in the module and the most important.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain why modern CPUs are limited by <strong>memory access</strong>, not arithmetic</li>
+                        <li>Describe a <strong>cache line</strong> and why <strong>cache misses</strong> dominate real-world performance</li>
+                        <li>Contrast <strong>Array of Structs (AoS)</strong> with <strong>Struct of Arrays (SoA)</strong> and pick the right one</li>
+                        <li>Split <strong>hot</strong> data from <strong>cold</strong> data to keep the cache full of what you actually touch</li>
+                        <li>See how this mindset leads directly into the Job System, Burst, and ECS</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 45 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Module 2 (especially Lesson 2.3 garbage-free code and 2.4 batching)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#gap" class="toc-link">The Memory Gap</a></li>
+                        <li><a href="#cache" class="toc-link">Cache Lines &amp; Misses</a></li>
+                        <li><a href="#aos-soa" class="toc-link">AoS vs SoA</a></li>
+                        <li><a href="#hotcold" class="toc-link">Hot &amp; Cold Data</a></li>
+                        <li><a href="#stack" class="toc-link">Where This Leads: The DOTS Stack</a></li>
+                        <li><a href="#mathematics" class="toc-link">A First Taste: Unity.Mathematics</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="gap" class="lesson-section">
+                <h2>The Memory Gap</h2>
+                <p>Here is a fact that reshapes how you write performance-critical code: a modern CPU can perform an arithmetic operation in well under a nanosecond, but fetching a value from main memory (RAM) takes on the order of <strong>100 nanoseconds</strong>. That's a factor of a hundred or more. The processor doesn't sit idle politely — it <em>stalls</em>, waiting for data to arrive, doing nothing useful for hundreds of cycles.</p>
+                <p>This is the <strong>memory gap</strong>, and it has been widening for decades: compute got fast far quicker than memory got close. The practical consequence is blunt — <strong>in most game code the CPU spends more time waiting for data than computing on it.</strong> If you want speed, the winning move is rarely "do less math." It's "wait for memory less often."</p>
+                <blockquote>
+                    <strong>💡 The reframing.</strong> Object-oriented design optimises for how <em>humans</em> organise concepts. Data-oriented design optimises for how the <em>hardware</em> reads memory. They frequently disagree, and on the hot path the hardware wins.
+                </blockquote>
+            </section>
+
+            <section id="cache" class="lesson-section">
+                <h2>Cache Lines &amp; Misses</h2>
+                <p>To hide the memory gap, CPUs keep small, fast <strong>caches</strong> (L1/L2/L3) between the core and RAM. When you read one byte, the CPU doesn't fetch just that byte — it pulls in the whole <strong>cache line</strong> around it, typically <strong>64 bytes</strong>, on the bet that you'll want the neighbours next. If your next read is already in cache, that's a <strong>cache hit</strong> (a few cycles). If it isn't, that's a <strong>cache miss</strong> (the ~100 ns stall).</p>
+                <p>So performance hinges on a simple question: <em>is the data I need next sitting right beside the data I'm using now?</em> Walk an array front to back and the answer is yes on almost every step — the CPU even <strong>prefetches</strong> ahead, so the data is waiting before you ask. Chase pointers to objects scattered across the heap and the answer is no, every step is a fresh miss.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 340" role="img" aria-labelledby="cacheTitle cacheDesc">
+                        <title id="cacheTitle">Sequential array access versus scattered pointer chasing</title>
+                        <desc id="cacheDesc">Top: a contiguous array walked left to right; one cache line of 64 bytes covers several elements, so most accesses are cache hits and the CPU prefetches ahead. Bottom: object references scattered across the heap, each access landing in a different cache line, causing a cache miss every time.</desc>
+                        <rect x="0" y="0" width="900" height="340" rx="8" fill="#22262d"/>
+
+                        <text x="20" y="34" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#9be6b0">✓ Contiguous array — stream through it</text>
+                        <g>
+                            <rect x="20" y="48" width="120" height="40" rx="3" fill="#2c3b30" stroke="#4e6b52"/>
+                            <rect x="140" y="48" width="120" height="40" rx="3" fill="#2c3b30" stroke="#4e6b52"/>
+                            <rect x="260" y="48" width="120" height="40" rx="3" fill="#2c3b30" stroke="#4e6b52"/>
+                            <rect x="380" y="48" width="120" height="40" rx="3" fill="#2c3b30" stroke="#4e6b52"/>
+                            <rect x="500" y="48" width="120" height="40" rx="3" fill="#333c30" stroke="#4e6b52"/>
+                            <rect x="620" y="48" width="120" height="40" rx="3" fill="#333c30" stroke="#4e6b52"/>
+                            <rect x="740" y="48" width="120" height="40" rx="3" fill="#333c30" stroke="#4e6b52"/>
+                            <g font-family="'Consolas',monospace" font-size="12" fill="#dfe6da" text-anchor="middle">
+                                <text x="80" y="73">[0]</text><text x="200" y="73">[1]</text><text x="320" y="73">[2]</text><text x="440" y="73">[3]</text><text x="560" y="73">[4]</text><text x="680" y="73">[5]</text><text x="800" y="73">[6]</text>
+                            </g>
+                            <rect x="18" y="44" width="366" height="48" rx="4" fill="none" stroke="#7fd48c" stroke-width="2.5" stroke-dasharray="6 4"/>
+                            <text x="200" y="112" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#7fd48c">one 64-byte cache line → several elements (hits)</text>
+                            <text x="700" y="112" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#7fd48c">prefetcher already loading ahead →</text>
+                        </g>
+
+                        <text x="20" y="176" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#ff9a9a">✗ Scattered objects — chase pointers</text>
+                        <g>
+                            <rect x="20" y="196" width="80" height="40" rx="3" fill="#3b2c2c" stroke="#6b4e4e"/>
+                            <text x="60" y="221" text-anchor="middle" font-family="'Consolas',monospace" font-size="12" fill="#e6dada">obj A</text>
+                            <rect x="300" y="250" width="80" height="40" rx="3" fill="#3b2c2c" stroke="#6b4e4e"/>
+                            <text x="340" y="275" text-anchor="middle" font-family="'Consolas',monospace" font-size="12" fill="#e6dada">obj B</text>
+                            <rect x="640" y="200" width="80" height="40" rx="3" fill="#3b2c2c" stroke="#6b4e4e"/>
+                            <text x="680" y="225" text-anchor="middle" font-family="'Consolas',monospace" font-size="12" fill="#e6dada">obj C</text>
+                            <rect x="470" y="286" width="80" height="40" rx="3" fill="#3b2c2c" stroke="#6b4e4e"/>
+                            <text x="510" y="311" text-anchor="middle" font-family="'Consolas',monospace" font-size="12" fill="#e6dada">obj D</text>
+                            <defs>
+                                <marker id="rr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff9a9a"/></marker>
+                            </defs>
+                            <path d="M100 216 C 200 216, 220 270, 300 270" fill="none" stroke="#ff9a9a" stroke-width="2" marker-end="url(#rr)"/>
+                            <path d="M380 270 C 500 270, 540 220, 640 220" fill="none" stroke="#ff9a9a" stroke-width="2" marker-end="url(#rr)"/>
+                            <path d="M680 240 C 640 300, 600 306, 550 306" fill="none" stroke="#ff9a9a" stroke-width="2" marker-end="url(#rr)"/>
+                            <text x="450" y="180" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#ff9a9a">every jump = a different cache line = a miss (~100 ns stall)</text>
+                        </g>
+                    </svg>
+                    <figcaption>Figure 1: The whole game. Walking packed data is cheap because one fetch brings the neighbours and the prefetcher runs ahead; chasing scattered references stalls the CPU on nearly every access.</figcaption>
+                </figure>
+            </section>
+
+            <section id="aos-soa" class="lesson-section">
+                <h2>AoS vs SoA</h2>
+                <p>Say you have 10,000 entities and each frame you only need to advance their positions by their velocities. The natural OOP layout is an <strong>Array of Structs</strong> — one array, each element a fat struct holding everything about the entity:</p>
+                <pre><code class="language-csharp">// Array of Structs (AoS) — everything about an entity together
+struct EntityAoS
+{
+    public Vector3 position;   // 12 bytes  ← the only fields our loop needs
+    public Vector3 velocity;   // 12 bytes  ←
+    public Quaternion rotation;// 16 bytes
+    public float health;       // 4 bytes
+    public int teamId;         // 4 bytes
+    public FancyStats stats;   // ...more cold data...
+}
+
+EntityAoS[] entities;   // 10,000 fat structs, back to back
+
+void MovePositions(float dt)
+{
+    for (int i = 0; i &lt; entities.Length; i++)
+        entities[i].position += entities[i].velocity * dt;
+}</code></pre>
+                <p>The loop only touches <code>position</code> and <code>velocity</code> — 24 useful bytes — but each struct might be 64+ bytes. So every cache line the CPU loads is <em>mostly the fields you're ignoring</em> (rotation, health, stats). You pay full memory bandwidth to drag along cold data you never read. The cache is full of garbage.</p>
+                <p>The data-oriented layout is a <strong>Struct of Arrays</strong> — split each field into its own packed array:</p>
+                <pre><code class="language-csharp">// Struct of Arrays (SoA) — one packed array per field
+Vector3[] positions;   // 10,000 positions, back to back
+Vector3[] velocities;  // 10,000 velocities, back to back
+Quaternion[] rotations;
+float[] healths;
+// ...
+
+void MovePositions(float dt)
+{
+    for (int i = 0; i &lt; positions.Length; i++)
+        positions[i] += velocities[i] * dt;   // both arrays stream cleanly
+}</code></pre>
+                <p>Now the two arrays the loop touches are each fully packed. Every cache line is 100% useful data; the prefetcher streams both arrays perfectly; nothing cold is dragged along. Same result, a fraction of the memory traffic — often several times faster, with no change to the arithmetic at all.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>AoS</strong> keeps all of one object's fields adjacent (great when you use most fields of one object at a time). <strong>SoA</strong> keeps all objects' values <em>for one field</em> adjacent (great when you use one or two fields across many objects — the classic game-loop shape). DOTS is built on SoA: this is exactly the "packed component array" you saw in <a href="lesson_16.html">Lesson 4.1's</a> chunk diagram.</p>
+                </div>
+            </section>
+
+            <section id="hotcold" class="lesson-section">
+                <h2>Hot &amp; Cold Data</h2>
+                <p>The AoS problem has a name: mixing <strong>hot data</strong> (fields touched every frame — position, velocity) with <strong>cold data</strong> (fields touched rarely — the display name, the loot table, a reference to a UI panel). When they share a struct, reading the hot field always pays to load the cold ones too.</p>
+                <p>The fix is to <strong>separate them by access frequency</strong>. Keep the per-frame hot fields in their own tight arrays; push the rarely-touched cold fields elsewhere. SoA does this naturally, but the principle applies even in ordinary OOP code: a component that runs every frame should not carry a 200-byte payload it reads once at spawn.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Don't cargo-cult SoA everywhere</h4>
+                    <p>SoA wins when you iterate <em>many</em> objects touching <em>few</em> fields. If your code reads most of one object's fields together (a single player, a UI element, a config), AoS is clearer and just as fast. Data-oriented design is about matching layout to <em>access pattern</em> — not blindly splitting every struct. Reach for SoA on the hot path over big collections; keep normal objects for everything else, exactly as you learned to reach for ECS selectively in Lesson 4.1.</p>
+                </div>
+            </section>
+
+            <section id="stack" class="lesson-section">
+                <h2>Where This Leads: The DOTS Stack</h2>
+                <p>Everything in the next two modules is machinery for making SoA, hot/cold-split data easy and safe to process at scale. Unity's <strong>Data-Oriented Technology Stack</strong> is three packages that build on each other:</p>
+
+                <div class="mermaid">
+flowchart TB
+    DOD["Data-Oriented Design<br/>(this lesson: SoA, cache-friendly layout)"]
+    subgraph STACK["The DOTS packages"]
+        direction TB
+        MATH["Unity.Mathematics<br/>SIMD-friendly math types (float3, quaternion)"]
+        COLL["Unity.Collections<br/>NativeArray &amp; friends: unmanaged, packed, GC-free"]
+        JOBS["C# Job System<br/>run that data processing on many worker threads (Module 3)"]
+        BURST["Burst compiler<br/>compile jobs to tight SIMD native code (Module 3)"]
+        ECS["Entities / ECS<br/>a whole object model built on all of the above (Module 4)"]
+    end
+    DOD --> MATH --> COLL --> JOBS --> BURST --> ECS
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 2: The stack. Each layer assumes cache-friendly data underneath it — which is why this mindset comes first.</p>
+
+                <p>The rest of Module 3 gives you the two workhorses: the <strong>Job System</strong> (Lessons 3.2–3.4) to spread that array-processing across CPU cores safely, and <strong>Burst</strong> (Lesson 3.4) to compile it into vectorised native code. Module 4 then wraps all of it in ECS. But every one of those tools is only as fast as the data layout you feed it — garbage in, cache misses out.</p>
+            </section>
+
+            <section id="mathematics" class="lesson-section">
+                <h2>A First Taste: Unity.Mathematics</h2>
+                <p>One concrete tool you'll use constantly is the <strong>Unity.Mathematics</strong> package — a math library designed for this world. Its types (<code>float3</code>, <code>float4</code>, <code>quaternion</code>, <code>float4x4</code>) are lowercase, blittable value types the <strong>Burst</strong> compiler can turn into SIMD instructions, and its functions live in a static <code>math</code> class that reads like a shader:</p>
+                <pre><code class="language-csharp">using Unity.Mathematics;   // note: float3, not Vector3
+
+float3 position = new float3(2f, 0f, 5f);
+float3 velocity = new float3(1f, 0f, 0f);
+float dt = 0.016f;
+
+position += velocity * dt;                 // component-wise, like Vector3
+float dist = math.distance(position, float3.zero);
+float3 dir  = math.normalize(velocity);
+quaternion rot = quaternion.RotateY(math.radians(90f));</code></pre>
+                <p>You can convert freely with <code>Vector3</code> (<code>float3 p = transform.position;</code> just works), but inside jobs and ECS you'll use the <code>Unity.Mathematics</code> types because Burst optimises them aggressively. Think of <code>float3</code> as "<code>Vector3</code> that a compiler can vectorise."</p>
+
+                <blockquote>
+                    <strong>🔎 You've already seen it.</strong> The real 25,600-entity render in <a href="lesson_16.html">Lesson 4.1</a> positioned every cube with a <code>float3</code> and a <code>Unity.Transforms.LocalTransform</code>. That was data-oriented layout in action — packed component arrays processed in bulk.
+                </blockquote>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Count the wasted bytes</h3>
+                    <p><strong>Objective:</strong> Feel the AoS cost numerically.</p>
+                    <p>Take the <code>EntityAoS</code> struct above. Assume <code>FancyStats</code> is 32 bytes, so one struct is 12+12+16+4+4+32 = <strong>80 bytes</strong>. A cache line is 64 bytes.</p>
+                    <ol>
+                        <li>The move loop reads only <code>position</code> + <code>velocity</code> = 24 useful bytes per entity. Roughly what fraction of each loaded cache line is <em>wasted</em> on cold data?</li>
+                        <li>In the SoA version, the loop streams a <code>Vector3[] positions</code> and a <code>Vector3[] velocities</code>. What fraction of those cache lines is useful now?</li>
+                        <li>Which layout lets the hardware prefetcher help you, and why?</li>
+                    </ol>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>(1) You want 24 of every ~80 bytes, so roughly <strong>70% of each cache line is wasted</strong> dragging along rotation/health/stats — and an 80-byte struct even straddles two 64-byte lines. (2) Essentially <strong>100% useful</strong>: both arrays are nothing but the values you read. (3) SoA — the prefetcher loves a single forward-marching array and can load the next lines before you ask; the scattered/striped AoS access defeats it.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Spot the right layout</h3>
+                    <p>For each case, choose AoS or SoA: (a) 50,000 particles, each frame update position from velocity; (b) one player character whose stats screen reads every field at once; (c) 5,000 enemies where a targeting system reads only each enemy's <code>position</code> and <code>teamId</code>.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>SoA</strong> — many objects, two hot fields. (b) <strong>AoS</strong> — one object, all fields together; splitting buys nothing. (c) <strong>SoA</strong> — split <code>position</code> and <code>teamId</code> into their own arrays so the targeting scan streams cleanly and ignores the cold combat fields.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why is "do less arithmetic" often the wrong optimisation on the hot path?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Arithmetic is already cheap; that's the point.">A) Because arithmetic is the slowest thing a CPU does</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A cache miss (~100 ns) dwarfs an arithmetic op (&lt;1 ns), so the CPU usually stalls on memory, not math.">B) Because the CPU spends most of its time stalled waiting for memory, not computing</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Compilers help, but the memory gap is the core reason.">C) Because the compiler removes arithmetic anyway</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> A loop over 10,000 objects touches only 2 of each object's 12 fields. Which layout is faster and why?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! SoA packs each field into its own array so every loaded cache line is 100% the data you read.">A) SoA — each cache line is filled with only the fields the loop reads</button>
+                            <button class="quiz-option" data-correct="false" data-hint="AoS drags the 10 unused fields through cache on every element.">B) AoS — keeping fields together is always faster</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Layout matters a lot here; it's not a wash.">C) No difference — the CPU reads the same bytes either way</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why use <code>Unity.Mathematics</code> <code>float3</code> instead of <code>Vector3</code> in jobs?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="They interconvert freely; it's not about precision.">A) It's more accurate than Vector3</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The Mathematics types are designed for the Burst compiler to vectorise into SIMD instructions.">B) Its types are designed for the Burst compiler to vectorise (SIMD)</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Vector3 works in jobs too after conversion; the reason is codegen.">C) Vector3 cannot be used in Unity at all anymore</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>The <strong>memory gap</strong> means CPUs mostly wait on RAM (~100 ns) rather than compute (&lt;1 ns); reducing cache misses beats reducing math.</li>
+                        <li>Reads pull a whole <strong>64-byte cache line</strong>; packed sequential access = hits + prefetch, scattered pointer-chasing = a miss per step.</li>
+                        <li><strong>SoA</strong> (one packed array per field) beats <strong>AoS</strong> when you iterate many objects touching few fields — the game-loop shape.</li>
+                        <li>Separate <strong>hot</strong> (per-frame) from <strong>cold</strong> (rare) data so the cache holds only what you touch.</li>
+                        <li>The <strong>DOTS stack</strong> — Mathematics → Collections → Jobs → Burst → ECS — is all built on this layout; <code>float3</code> is <code>Vector3</code> that Burst can vectorise.</li>
+                        <li>Match layout to <em>access pattern</em>; don't split every struct on reflex.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have data laid out for the hardware. In <strong>Lesson 3.2: Your First Job — IJob &amp; Scheduling</strong> we take that packed data and process it on Unity's worker threads with the C# Job System, turning a serial loop into safe multithreaded work.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧠 Think in arrays, not objects</h3>
+                    <p>When a system touches thousands of things, ask "what's the one array I'm really iterating, and is it packed?" That question is the seed of every optimisation in this half of the course.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_10.html" class="prev-lesson">← Previous: Profiling &amp; Fixing a Stress Scene</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_12.html" class="next-lesson">Next: Your First Job — IJob &amp; Scheduling →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

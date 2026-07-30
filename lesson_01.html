@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Assembly definitions (.asmdef) are how you carve a large Unity project into modules: faster incremental compiles, enforced dependency boundaries, no cyclic references. Create them, wire references, split editor from runtime, and lay out a Core/Gameplay/UI/Editor/Tests project.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 1.1: Assembly Definitions &amp; Structuring a Large Project — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 1: Advanced Architecture &amp; Async</a></li>
+            <li aria-current="page">Lesson 1.1: Assembly Definitions &amp; Structuring a Large Project</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧱 Lesson 1.1: Assembly Definitions &amp; Structuring a Large Project</h1>
+                <p class="lead">By default, every C# script in your project lands in one giant assembly — <code>Assembly-CSharp.dll</code>. Change one line and Unity recompiles <em>everything</em>. On a small game that's fine; on a real project it means ten-second waits after every keystroke and a codebase where anything can reference anything. This lesson introduces the single most important structural tool Unity gives you: the <strong>assembly definition</strong>. You'll learn what an <code>.asmdef</code> is, why splitting your code into assemblies makes compiles faster and dependencies enforceable, and how to lay out a large project so it stays sane as it grows.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain what an <code>.asmdef</code> file is and how it maps a folder of scripts to a compiled assembly</li>
+                        <li>Justify assemblies in terms of <strong>faster incremental compiles</strong> and <strong>enforced dependency boundaries</strong></li>
+                        <li>Create an assembly definition, wire up <strong>assembly references</strong>, and diagnose a cyclic-reference error</li>
+                        <li>Split <strong>editor-only</strong> code from runtime code, and use an <code>.asmref</code> to extend an assembly across folders</li>
+                        <li>Constrain an assembly by <strong>platform</strong> and by <strong>scripting define</strong></li>
+                        <li>Lay out a large project as <strong>Core / Gameplay / UI / Editor / Tests</strong> with a clean dependency direction</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 55 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Confident C# and comfort with the Unity Editor's Project window (Unity Intermediate)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#problem" class="toc-link">The One-Assembly Problem</a></li>
+                        <li><a href="#what" class="toc-link">What an .asmdef Actually Is</a></li>
+                        <li><a href="#create" class="toc-link">Creating One &amp; Wiring References</a></li>
+                        <li><a href="#cyclic" class="toc-link">Cyclic References &amp; Dependency Direction</a></li>
+                        <li><a href="#editor" class="toc-link">Editor vs Runtime, and .asmref</a></li>
+                        <li><a href="#constraints" class="toc-link">Platform &amp; Define Constraints</a></li>
+                        <li><a href="#layout" class="toc-link">A Sane Large-Project Layout</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="problem" class="lesson-section">
+                <h2>The One-Assembly Problem</h2>
+                <p>When you write a script and don't do anything special, Unity compiles it into a predefined assembly called <code>Assembly-CSharp.dll</code>. Every other loose script goes there too. This has two consequences that get more painful the bigger your project gets.</p>
+                <p><strong>First: compile times.</strong> C# compiles a whole assembly at a time. If all 2,000 of your scripts live in one assembly, touching a single one forces the compiler to rebuild all 2,000 — and Unity to reload the whole domain — before you can press Play. Split those scripts into ten assemblies and editing a UI script only recompiles the UI assembly. Incremental compilation is the headline reason studios adopt assemblies early.</p>
+                <p><strong>Second: no boundaries.</strong> When everything is in one assembly, every class can <code>using</code> and call every other class. Your enemy AI can reach straight into your save system, your UI can poke gameplay internals, and nothing stops it. Architecture becomes a suggestion. Assemblies turn "please don't depend on that" into a compile error — the only kind of rule a codebase actually keeps.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>An <strong>assembly</strong> is a single compiled unit — a <code>.dll</code>. C# resolves references and enforces access <em>at the assembly level</em>: an assembly can only see the assemblies it explicitly references, and <code>internal</code> members are visible only within their own assembly. Assembly definitions let you decide where those boundaries fall in <em>your</em> project instead of dumping everything into one.</p>
+                </div>
+            </section>
+
+            <section id="what" class="lesson-section">
+                <h2>What an .asmdef Actually Is</h2>
+                <p>An <strong>assembly definition file</strong> (<code>.asmdef</code>) is a small JSON asset you drop into a folder. It tells Unity: "compile every script in this folder and its subfolders into one assembly, named this, referencing these other assemblies." The folder becomes the assembly's boundary; the JSON becomes its rulebook.</p>
+                <p>Here's what one looks like on disk. This is the raw JSON Unity's inspector edits for you — worth reading once so the checkboxes in the UI make sense:</p>
+                <pre><code class="language-none">{
+    "name": "Studio.Gameplay",
+    "rootNamespace": "Studio.Gameplay",
+    "references": [
+        "Studio.Core",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}</code></pre>
+                <p>The fields you'll touch most:</p>
+                <ul>
+                    <li><strong><code>name</code></strong> — the compiled assembly's name (and the name other <code>.asmdef</code>s use to reference it). Convention: <code>Company.Feature</code>, e.g. <code>Studio.Gameplay</code>.</li>
+                    <li><strong><code>references</code></strong> — the other assemblies this one is allowed to use. If it's not listed here, you can't <code>using</code> it. This is the boundary.</li>
+                    <li><strong><code>includePlatforms</code> / <code>excludePlatforms</code></strong> — restrict which build targets this assembly compiles for (see the constraints section).</li>
+                    <li><strong><code>autoReferenced</code></strong> — when <code>true</code>, the default <code>Assembly-CSharp</code> can see this assembly automatically. Turn it <code>false</code> for editor/tools assemblies you don't want leaking into game code.</li>
+                    <li><strong><code>defineConstraints</code></strong> — only compile this assembly when a scripting define symbol is present.</li>
+                </ul>
+                <blockquote>
+                    <strong>💡 One rule to internalize.</strong> The <em>folder</em> an <code>.asmdef</code> lives in defines the assembly's contents; the <em>references list</em> defines what it may depend on. Move a script into that folder tree and it joins the assembly automatically — no manual file lists.
+                </blockquote>
+            </section>
+
+            <section id="create" class="lesson-section">
+                <h2>Creating One &amp; Wiring References</h2>
+                <p>Creating an assembly definition is a right-click away. The steps:</p>
+                <ol>
+                    <li>Make a folder for the module, e.g. <code>Assets/Scripts/Gameplay</code>.</li>
+                    <li>Right-click it → <strong>Create ▸ Scripting ▸ Assembly Definition</strong>. Name it after the assembly: <code>Studio.Gameplay</code>.</li>
+                    <li>Select the new <code>.asmdef</code>. In the Inspector, under <strong>Assembly Definition References</strong>, click <strong>+</strong> and add the assemblies this module needs — say <code>Studio.Core</code> and <code>Unity.InputSystem</code>.</li>
+                    <li>Click <strong>Apply</strong>. Unity recompiles, and now <code>Studio.Gameplay</code> is its own <code>.dll</code>.</li>
+                </ol>
+                <p>The moment you add that first <code>.asmdef</code>, the rules change: scripts in that folder can <em>only</em> reach engine assemblies plus what you listed. Reference a class you haven't wired up and you get a hard <code>The type or namespace name could not be found</code> — the boundary talking.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Referencing packages: name vs GUID</h4>
+                    <p>You can reference assemblies by <strong>name</strong> (like <code>Unity.InputSystem</code>) or by <strong>GUID</strong>. Name references read clearly in the JSON and survive across projects; GUID references survive an assembly <em>rename</em>. Unity's default is GUID with the name shown in the UI. Either works — just be consistent, and prefer names when you hand-edit JSON so a teammate can read it.</p>
+                </div>
+
+                <p>A second lever hides in the same inspector: <strong>Use GUIDs</strong>, <strong>No Engine References</strong> (for pure logic assemblies that shouldn't touch <code>UnityEngine</code> at all — handy for testable, portable code), and <strong>Auto Referenced</strong>. For a normal gameplay module leave these at defaults; you'll reach for them deliberately as your architecture matures.</p>
+            </section>
+
+            <section id="cyclic" class="lesson-section">
+                <h2>Cyclic References &amp; Dependency Direction</h2>
+                <p>Assemblies form a <strong>directed acyclic graph</strong> — dependencies must flow one way, and you may never form a loop. If <code>Studio.Core</code> references <code>Studio.Gameplay</code> and <code>Studio.Gameplay</code> references <code>Studio.Core</code>, Unity refuses to compile either and reports a <em>cyclic assembly reference</em>. There's no override; the loop must be broken.</p>
+                <p>This constraint is a feature. It forces you to answer "who depends on whom?" up front. The healthy answer is a <strong>layered</strong> one: low-level, stable code at the bottom that knows nothing about the layers above it, and feature code on top that depends downward. Below is the shape you're aiming for.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 470" role="img" aria-labelledby="depTitle depDesc">
+                        <title id="depTitle">Allowed layered assembly dependencies versus a forbidden cycle</title>
+                        <desc id="depDesc">On the left, a legal dependency graph: a Core assembly at the bottom is referenced by a Gameplay assembly above it, which is referenced by a UI assembly at the top; separate Editor and Tests assemblies reference downward into Gameplay and Core. All arrows point downward toward Core. On the right, a forbidden configuration shows Core and Gameplay pointing at each other, forming a cycle marked with a red cross as illegal.</desc>
+
+                        <rect x="0" y="0" width="900" height="470" rx="8" fill="#22262d"/>
+
+                        <text x="250" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#9be6b0">✔ Allowed — dependencies flow one way</text>
+
+                        <!-- UI -->
+                        <rect x="150" y="54" width="200" height="52" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="250" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ffffff">UI</text>
+                        <!-- Gameplay -->
+                        <rect x="150" y="176" width="200" height="52" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="250" y="208" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ffffff">Gameplay</text>
+                        <!-- Core -->
+                        <rect x="150" y="298" width="200" height="52" rx="6" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="250" y="330" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ffffff">Core</text>
+
+                        <!-- Editor -->
+                        <rect x="18" y="176" width="104" height="52" rx="6" fill="#5a4a2f" stroke="#a08048"/>
+                        <text x="70" y="208" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ffffff">Editor</text>
+                        <!-- Tests -->
+                        <rect x="378" y="176" width="104" height="52" rx="6" fill="#4a2f5a" stroke="#8a58a0"/>
+                        <text x="430" y="208" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ffffff">Tests</text>
+
+                        <defs>
+                            <marker id="ag" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/>
+                            </marker>
+                            <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#ff8a8a"/>
+                            </marker>
+                        </defs>
+
+                        <!-- UI -> Gameplay -->
+                        <line x1="250" y1="106" x2="250" y2="174" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ag)"/>
+                        <!-- Gameplay -> Core -->
+                        <line x1="250" y1="228" x2="250" y2="296" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ag)"/>
+                        <!-- Editor -> Gameplay -->
+                        <line x1="122" y1="202" x2="148" y2="202" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ag)"/>
+                        <!-- Editor -> Core (curve) -->
+                        <path d="M70 228 C 70 300, 120 324, 148 324" fill="none" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ag)"/>
+                        <!-- Tests -> Gameplay -->
+                        <line x1="378" y1="202" x2="352" y2="202" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ag)"/>
+                        <!-- Tests -> Core (curve) -->
+                        <path d="M430 228 C 430 300, 380 324, 352 324" fill="none" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ag)"/>
+
+                        <text x="250" y="382" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">every arrow points down toward Core — no loops</text>
+
+                        <!-- divider -->
+                        <line x1="560" y1="40" x2="560" y2="430" stroke="#3a4149" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+                        <!-- Forbidden -->
+                        <text x="730" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#ff8a8a">✗ Forbidden — a cycle</text>
+
+                        <rect x="630" y="120" width="200" height="52" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="730" y="152" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ffffff">Gameplay</text>
+                        <rect x="630" y="272" width="200" height="52" rx="6" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="730" y="304" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#ffffff">Core</text>
+
+                        <!-- Gameplay -> Core -->
+                        <line x1="700" y1="172" x2="700" y2="270" stroke="#ff8a8a" stroke-width="2.4" marker-end="url(#ar)"/>
+                        <!-- Core -> Gameplay (back up) -->
+                        <line x1="760" y1="272" x2="760" y2="174" stroke="#ff8a8a" stroke-width="2.4" marker-end="url(#ar)"/>
+
+                        <text x="730" y="360" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#ff8a8a">cyclic assembly reference → won't compile</text>
+                        <text x="730" y="384" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">Core must not know about Gameplay</text>
+
+                        <!-- big red X over the cycle -->
+                        <line x1="690" y1="200" x2="770" y2="245" stroke="#ff8a8a" stroke-width="3" opacity="0.6"/>
+                        <line x1="770" y1="200" x2="690" y2="245" stroke="#ff8a8a" stroke-width="3" opacity="0.6"/>
+                    </svg>
+                    <figcaption>Figure 1: Legal layered dependencies (left) all point downward toward a stable <strong style="color:#9be6b0">Core</strong>. A <strong style="color:#ff8a8a">cycle</strong> (right) — where Core also depends back on Gameplay — is rejected by the compiler. When two assemblies want to reference each other, the fix is to extract the shared piece into a lower assembly they both point down to.</figcaption>
+                </figure>
+
+                <div class="card card-success">
+                    <h4>✅ How to break a cycle</h4>
+                    <p>When A and B both want each other, extract the thing they share — usually an <strong>interface</strong> or a data type — into a lower assembly (say <code>Core</code>) that both reference. Now A and B both point <em>down</em> to Core and never at each other. This is the same seam-through-interfaces idea you'll formalize in <strong>Lesson 1.2: Dependency Injection &amp; Inversion of Control</strong>.</p>
+                </div>
+            </section>
+
+            <section id="editor" class="lesson-section">
+                <h2>Editor vs Runtime, and .asmref</h2>
+                <p>Editor code — custom inspectors, <code>EditorWindow</code>s, build scripts — uses the <code>UnityEditor</code> namespace, which <strong>does not exist in a build</strong>. If editor code ends up in a runtime assembly, your player build fails to compile. Assemblies are how you keep the two apart cleanly.</p>
+                <p>The convention: put editor code in an <code>Editor</code> subfolder with its own <code>.asmdef</code> whose <strong>Include Platforms</strong> is set to <strong>Editor only</strong>. That assembly references its runtime sibling (to extend it) plus the engine's editor assemblies, and — because it's editor-only — it simply isn't part of any build.</p>
+                <pre><code class="language-none">{
+    "name": "Studio.Gameplay.Editor",
+    "references": [ "Studio.Gameplay", "Studio.Core" ],
+    "includePlatforms": [ "Editor" ],
+    "autoReferenced": false
+}</code></pre>
+
+                <p>Sometimes you want a folder's scripts to join an <em>existing</em> assembly rather than form a new one — for instance, a feature split across two locations. That's what an <strong>assembly definition reference</strong> (<code>.asmref</code>) is for. Create one via <strong>Create ▸ Scripting ▸ Assembly Definition Reference</strong>, point it at a target <code>.asmdef</code>, and every script in that folder compiles <em>into</em> the target assembly instead of the default one. An <code>.asmref</code> adds folders to an assembly; an <code>.asmdef</code> creates one.</p>
+
+                <blockquote>
+                    <strong>💡 The classic use.</strong> A big feature lives under <code>Assets/Features/Inventory</code>, but its editor tools naturally sit under <code>Assets/Tools/InventoryEditor</code>. Drop an <code>.asmref</code> in the tools folder targeting <code>Studio.Inventory.Editor</code> and both locations compile into one editor assembly — no code moves.
+                </blockquote>
+            </section>
+
+            <section id="constraints" class="lesson-section">
+                <h2>Platform &amp; Define Constraints</h2>
+                <p>Two more knobs let an assembly compile only under certain conditions.</p>
+                <p><strong>Platform constraints</strong> (<code>includePlatforms</code> / <code>excludePlatforms</code>) restrict which build targets an assembly is part of. An editor-only assembly uses <code>includePlatforms: ["Editor"]</code>. A console-specific input layer might exclude WebGL. If neither list is set, the assembly builds for every platform — the usual case for gameplay code.</p>
+                <p><strong>Define constraints</strong> (<code>defineConstraints</code>) compile the assembly only when a given <em>scripting define symbol</em> is present. This is how you gate optional integrations: an analytics adapter that only exists when <code>ENABLE_ANALYTICS</code> is defined, or code that depends on a package that may not be installed.</p>
+                <pre><code class="language-none">{
+    "name": "Studio.Analytics.Adapter",
+    "references": [ "Studio.Core" ],
+    "defineConstraints": [ "ENABLE_ANALYTICS" ]
+}</code></pre>
+                <p>Closely related, <strong>version defines</strong> auto-create a define symbol when a specific package version is present — the mechanism behind code that says "use the fast path only if the Collections package is 2.1 or newer." You set the package name and version range in the inspector, and Unity defines the symbol for you. You'll see this pattern when we integrate optional packages later in the course.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Constraints hide code silently</h4>
+                    <p>An assembly gated behind a missing define simply <em>doesn't compile</em> — its types vanish, and any code referencing them errors as if they never existed. When a class mysteriously "isn't found," check whether its assembly has a define or platform constraint that isn't satisfied in your current setup. It's a common half-hour-lost bug.</p>
+                </div>
+            </section>
+
+            <section id="layout" class="lesson-section">
+                <h2>A Sane Large-Project Layout</h2>
+                <p>Put it together and a professional project's scripts organize into a handful of assemblies with a clear dependency direction. A solid starting skeleton:</p>
+                <pre><code class="language-none">Assets/
+  Scripts/
+    Core/            Studio.Core            (no game deps; utils, interfaces, data types)
+      Studio.Core.asmdef
+    Gameplay/        Studio.Gameplay        → references Core
+      Studio.Gameplay.asmdef
+    UI/              Studio.UI              → references Gameplay, Core
+      Studio.UI.asmdef
+    Editor/          Studio.Editor          → references Gameplay, Core   (Editor platform only)
+      Studio.Editor.asmdef
+  Tests/
+    EditMode/        Studio.Tests.EditMode  → references Core, Gameplay   (Editor only)
+      Studio.Tests.EditMode.asmdef
+    PlayMode/        Studio.Tests.PlayMode  → references Gameplay, UI
+      Studio.Tests.PlayMode.asmdef</code></pre>
+                <p>The guiding principles:</p>
+                <ul>
+                    <li><strong>Core is the foundation.</strong> It holds interfaces, shared data types, and pure utilities, and it references <em>nothing</em> of yours. Everything depends down toward it; it depends on nobody. Consider ticking <strong>No Engine References</strong> for the parts that are pure logic so they stay unit-testable and portable.</li>
+                    <li><strong>Features depend downward, never sideways in a loop.</strong> UI knows about Gameplay; Gameplay does not know about UI. If UI needs to signal Gameplay, it does so through an interface or event defined in Core — not a back-reference.</li>
+                    <li><strong>Editor and Tests are leaves.</strong> They reference the runtime assemblies but nothing references <em>them</em>, and both are editor-platform-only so they never enter a build. Test assemblies also reference <code>UnityEngine.TestRunner</code> (Lesson 8.1).</li>
+                    <li><strong>Split further as it grows.</strong> A big Gameplay assembly can become <code>Studio.Combat</code>, <code>Studio.Inventory</code>, <code>Studio.Economy</code> — each its own compile unit — the day compile times or coupling start to hurt.</li>
+                </ul>
+                <p>You don't need this on day one of a game jam. But the moment a project is going to live for months and be touched by more than one person, assemblies are the difference between a codebase that stays workable and one that congeals. They are the structural bedrock every other technique in this module — DI, patterns, the bootstrapper — sits on top of.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Rule of thumb</h4>
+                    <p>Draw your dependency arrows before you draw your folders. If every arrow points toward a small, stable Core and none form a loop, your assembly layout is right — the folders just follow.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Split a project into assemblies</h3>
+                    <p><strong>Objective:</strong> Turn a one-assembly project into a layered one and feel the boundary bite.</p>
+                    <ol>
+                        <li>In any project, create folders <code>Scripts/Core</code>, <code>Scripts/Gameplay</code>, and <code>Scripts/UI</code>.</li>
+                        <li>Add an <code>.asmdef</code> to each: <code>Studio.Core</code>, <code>Studio.Gameplay</code>, <code>Studio.UI</code>.</li>
+                        <li>Wire references so Gameplay → Core, and UI → Gameplay + Core. Leave Core referencing nothing.</li>
+                        <li>Put a simple class in Core (say <code>public static class MathUtil</code>), use it from Gameplay — works. Now try to use a Gameplay class <em>from Core</em>.</li>
+                        <li>Observe the compile error. Then try making Core reference Gameplay to "fix" it and read the cyclic-reference error.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What you should see</summary>
+                        <p>Using Core from Gameplay compiles fine (the arrow points the right way). Using Gameplay from Core fails with a "type or namespace not found" error, because Core doesn't reference Gameplay. Adding that reference to Core then triggers a <em>cyclic assembly reference</em> error affecting both assemblies. The lesson: shared code belongs <em>down</em> in Core, referenced by both — not a back-edge.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Isolate editor code</h3>
+                    <p>Add an <code>Editor</code> subfolder under Gameplay with its own <code>.asmdef</code> set to <strong>Editor</strong>-only platform, referencing <code>Studio.Gameplay</code>. Put a trivial <code>[CustomEditor]</code> or a script that <code>using UnityEditor;</code> inside it. Then confirm a player build compiles. As a contrast, temporarily move that editor script into the runtime Gameplay folder and note the build break.</p>
+                    <details>
+                        <summary>✅ Expected result</summary>
+                        <p>With the editor script in the Editor-only assembly, the build succeeds — that assembly is excluded from non-editor targets. Moved into the runtime assembly, <code>using UnityEditor;</code> fails to compile for the player build because <code>UnityEditor</code> doesn't exist there. This is exactly why editor code needs its own editor-platform assembly (or an <code>Editor</code> folder).</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What is the primary <em>compile-time</em> benefit of splitting scripts into multiple assemblies?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Assemblies don't make the compiler itself faster per line.">A) The C# compiler runs at a higher optimization level</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Editing a script only recompiles its own assembly (and dependents), not the entire project — that's incremental compilation.">B) Editing one script only recompiles that assembly, not every script in the project</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Runtime speed is unaffected; this is about compile/iteration time.">C) The game runs faster at runtime because DLLs are smaller</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> <code>Studio.Core</code> references <code>Studio.Gameplay</code>, and <code>Studio.Gameplay</code> references <code>Studio.Core</code>. What happens?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Unity does not silently pick a winner; the graph must be acyclic.">A) Unity compiles them in alphabetical order</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Assembly dependencies must be acyclic. A loop produces a cyclic assembly reference error and neither assembly compiles.">B) A cyclic assembly reference error — neither compiles until the loop is broken</button>
+                            <button class="quiz-option" data-correct="false" data-hint="There's no such merge; the cycle is simply rejected.">C) Unity merges them into a single assembly automatically</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> You want a folder of scripts to compile <em>into an existing</em> assembly rather than create a new one. Which asset do you use?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="An .asmdef creates a new assembly at that folder.">A) An Assembly Definition (<code>.asmdef</code>)</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! An Assembly Definition Reference (.asmref) points a folder at an existing .asmdef so its scripts join that assembly.">B) An Assembly Definition Reference (<code>.asmref</code>)</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A .rsp file passes compiler flags, not folder membership.">C) A compiler response file (<code>.rsp</code>)</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> How do you keep <code>using UnityEditor;</code> code from breaking your player build?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Placing editor code in an assembly whose Include Platforms is Editor-only excludes it from every build target.">A) Put it in an assembly with Include Platforms set to Editor only</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Comments don't gate compilation of a namespace that doesn't exist in the build.">B) Add a comment marking it as editor-only</button>
+                            <button class="quiz-option" data-correct="false" data-hint="allowUnsafeCode is about pointers, unrelated to UnityEditor availability.">C) Enable Allow Unsafe Code on the assembly</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Without <code>.asmdef</code>s, every script compiles into one <code>Assembly-CSharp.dll</code> — slow incremental compiles and zero dependency boundaries.</li>
+                        <li>An <strong>assembly definition</strong> makes a folder into its own <code>.dll</code>; its <code>references</code> list defines exactly what it may depend on.</li>
+                        <li>Assembly dependencies must form a <strong>directed acyclic graph</strong> — cycles are a hard compile error, fixed by extracting shared code into a lower assembly.</li>
+                        <li><strong>Editor code</strong> belongs in an Editor-platform-only assembly so <code>UnityEditor</code> never leaks into a build; an <code>.asmref</code> lets extra folders join an existing assembly.</li>
+                        <li><strong>Platform</strong> and <strong>define constraints</strong> compile an assembly only for certain targets or when a scripting define is present.</li>
+                        <li>A sane layout is layered — <strong>Core ← Gameplay ← UI</strong>, with Editor and Tests as leaves — every arrow pointing down toward a small, stable Core.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Assemblies enforce <em>where</em> dependencies may point; the next lesson tackles <em>how</em> objects get the things they depend on without hard-wiring themselves together. In <strong>Lesson 1.2: Dependency Injection &amp; Inversion of Control</strong>, you'll replace <code>FindObjectOfType</code> and singletons with interfaces and injection — the seams that let a UI assembly talk to gameplay without either reaching into the other.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧱 You have a structure</h3>
+                    <p>Layered assemblies with one-way dependencies are the skeleton of every professional Unity project. Everything else in this module hangs off that skeleton.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="index.html" class="prev-lesson">← Course Home</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_02.html" class="next-lesson">Next: Dependency Injection &amp; Inversion of Control →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Write garbage-free C# for Unity 6: how the incremental GC works and why GC spikes hurt, the common allocation sources (boxing, closures, LINQ, string concatenation, params, ToArray/ToList), structs vs classes, StringBuilder, physics NonAlloc APIs, ObjectPool&lt;T&gt;, and caching component lookups — with a full before/after refactor.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 2.3: Writing Garbage-Free Code — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 2: Performance Engineering</a></li>
+            <li aria-current="page">Lesson 2.3: Writing Garbage-Free Code</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>♻️ Lesson 2.3: Writing Garbage-Free Code</h1>
+                <p class="lead">A leak (Lesson 2.2) is memory that never comes back. This lesson is about the opposite failure: memory allocated and thrown away so fast that cleaning it up becomes the thing that stutters your game. Every managed allocation is a future bill from the <strong>garbage collector</strong>, and when that bill comes due mid-frame you get a hitch. The fix isn't to allocate faster — it's to allocate <em>nothing</em> on the hot path. Here you'll learn where hidden allocations come from and how to write the tight, garbage-free code that ships in shipping games.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain how Unity's <strong>incremental GC</strong> works and why a GC spike shows up as a frame hitch</li>
+                        <li>Recognize the common <strong>allocation sources</strong>: boxing, closures that capture state, LINQ, string concatenation, <code>params</code>, and <code>.ToArray()</code>/<code>.ToList()</code></li>
+                        <li>Choose <strong>structs vs classes</strong> deliberately to keep small data off the heap</li>
+                        <li>Build strings with <code>StringBuilder</code> and use Unity's <strong><code>NonAlloc</code> physics APIs</strong></li>
+                        <li>Reuse objects with the built-in generic <code>ObjectPool&lt;T&gt;</code> and <strong>cache component lookups</strong></li>
+                        <li>Refactor a real allocating method into a fully <strong>garbage-free</strong> one</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 70 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 2.1 (reading GC Alloc in the Profiler) and the pooling you met in Unity Intermediate</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#gc" class="toc-link">The GC and Why Spikes Hurt</a></li>
+                        <li><a href="#sources" class="toc-link">Where Garbage Comes From</a></li>
+                        <li><a href="#structs" class="toc-link">Structs vs Classes</a></li>
+                        <li><a href="#strings" class="toc-link">Strings &amp; StringBuilder</a></li>
+                        <li><a href="#nonalloc" class="toc-link">NonAlloc Physics APIs</a></li>
+                        <li><a href="#pooling" class="toc-link">Pooling &amp; Caching Lookups</a></li>
+                        <li><a href="#refactor" class="toc-link">A Before/After Refactor</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="gc" class="lesson-section">
+                <h2>The GC and Why Spikes Hurt</h2>
+                <p>C# is garbage-collected: you <code>new</code> a reference type, use it, and the <strong>garbage collector</strong> reclaims it once nothing points at it. Convenient — but not free. Unity historically used a <em>stop-the-world</em> collector: when it ran, your entire game froze while it walked the heap. On a big heap that's a multi-millisecond pause, and a pause is a dropped frame.</p>
+                <p>Unity 6's default is the <strong>incremental GC</strong>, which splits that work across several frames so no single frame eats the whole collection. It's a genuine improvement — but it is <em>not</em> a licence to allocate freely. Incremental collection still costs CPU time every frame it's active, it can still spike when it must finish a collection under pressure, and the more garbage you produce the more often it runs. The winning move is unchanged: <strong>produce so little garbage that the GC almost never needs to run.</strong></p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — GC Alloc</h4>
+                    <p>The Profiler's <strong>GC Alloc</strong> column (Lesson 2.1) is bytes of <em>managed heap</em> allocated by a call, per frame. The gold standard for a hot path — anything in <code>Update</code>, <code>FixedUpdate</code>, or a per-frame loop — is <strong>0&nbsp;B</strong>. Any steady non-zero number in a per-frame method is garbage you're manufacturing on a schedule, and it <em>will</em> trigger collections. Sort Hierarchy by GC Alloc and drive the hot rows to zero.</p>
+                </div>
+
+                <p>Here is the causal chain, from the small allocations you sprinkle through <code>Update</code> to the hitch the player feels:</p>
+
+                <div class="mermaid">
+flowchart TB
+    subgraph SRC["Allocation sources on the hot path"]
+        direction LR
+        A["Boxing<br/>(struct → object)"]
+        B["Lambda closures<br/>capturing state"]
+        C["LINQ<br/>Where/Select/ToList"]
+        D["String concat<br/>&quot;Score: &quot; + n"]
+        E["params arrays<br/>&amp; .ToArray()/.ToList()"]
+        F["new class[] each frame"]
+    end
+    A --> H["Managed heap grows"]
+    B --> H
+    C --> H
+    D --> H
+    E --> H
+    F --> H
+    H --> G["GC pressure rises<br/>collector runs more often"]
+    G --> S["GC spike mid-frame"]
+    S --> P["🩹 Dropped frame / stutter"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: How small, frequent allocations become a visible hitch. Each source feeds the managed heap; a fuller heap makes the collector run more often; a collection under pressure spikes a frame. Cut the sources at the top and the whole chain never fires.</p>
+            </section>
+
+            <section id="sources" class="lesson-section">
+                <h2>Where Garbage Comes From</h2>
+                <p>Most per-frame garbage is invisible until you learn to see it. These are the usual suspects — each looks harmless and each allocates every time it runs.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-warning pillar">
+                        <h4>📦 Boxing</h4>
+                        <p>Passing a value type (<code>int</code>, <code>enum</code>, <code>struct</code>) where an <code>object</code> is expected <em>boxes</em> it — wraps it in a heap allocation. <code>Debug.Log("x=" + 5)</code>, adding an <code>enum</code> key to a non-generic collection, or a struct in an <code>ArrayList</code> all box silently.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>λ Closures</h4>
+                        <p>A lambda that <em>captures</em> a local or field allocates a hidden class to hold the captured state. <code>list.Sort((a,b) =&gt; a.dist - center)</code> where <code>center</code> is a local allocates a closure object each call.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>🔗 LINQ</h4>
+                        <p>Elegant, and allocation-heavy: every <code>Where</code>/<code>Select</code>/<code>OrderBy</code> allocates an iterator, and <code>ToList()</code>/<code>ToArray()</code> allocates the result. Lovely for tools and setup; poison in <code>Update</code>.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>🧵 String work</h4>
+                        <p>Strings are immutable, so <code>"Score: " + score</code> allocates a new string every time — and every intermediate in a chain. A per-frame HUD update this way is a steady garbage drip.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>… params &amp; copies</h4>
+                        <p><code>params object[]</code> methods allocate an array per call; <code>.ToArray()</code>/<code>.ToList()</code> copy into a fresh collection; <code>foreach</code> over some non-generic or interface types allocates an enumerator.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>🆕 Per-frame <code>new</code></h4>
+                        <p>Any <code>new</code> of a <em>class</em> (reference type) in a hot loop — a temporary <code>List</code>, a <code>Vector3[]</code>, a throwaway helper object — is a heap allocation. Move it out of the loop or make it a reused field.</p>
+                    </div>
+                </div>
+
+                <p>The through-line: <strong>allocation happens on <code>new</code> of a reference type, and on the hidden <code>new</code>s the compiler inserts for boxing, closures, and iterators.</strong> Learn to spot the hidden ones and half the battle is won. The Profiler's GC Alloc column is your ground truth — if you're unsure whether a line allocates, put a marker around it and read the number.</p>
+            </section>
+
+            <section id="structs" class="lesson-section">
+                <h2>Structs vs Classes</h2>
+                <p>The cheapest allocation is the one that never touches the heap. A <code>class</code> is a <strong>reference type</strong>: <code>new</code>-ing one always allocates on the managed heap and creates GC work. A <code>struct</code> is a <strong>value type</strong>: a local struct lives on the stack (or inline inside its container), costs nothing to "allocate," and never bothers the GC.</p>
+                <p>So for small, short-lived, data-only bundles — a grid coordinate, a hit result, a damage packet — prefer a <code>struct</code>. This is exactly why Unity's own math types (<code>Vector3</code>, <code>Quaternion</code>, <code>float3</code>) are structs: they're created and discarded constantly, and if each were a class every vector math line would allocate.</p>
+
+                <pre><code class="language-csharp">// CLASS: every 'new GridCoord(...)' allocates on the heap → GC work.
+public class GridCoordClass { public int X, Y; }
+
+// STRUCT: a local lives on the stack, zero GC. Prefer this for small data.
+public readonly struct GridCoord
+{
+    public readonly int X, Y;
+    public GridCoord(int x, int y) { X = x; Y = y; }
+}</code></pre>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Structs are not a free win — three traps</h4>
+                    <ul>
+                        <li><strong>Copy cost.</strong> Structs are copied by value on every assignment and method call. A <em>large</em> struct copied constantly can be slower than a class you pass by reference. Keep structs small (a handful of fields); pass big ones with <code>in</code>/<code>ref</code>.</li>
+                        <li><strong>Boxing undoes it.</strong> Store a struct in a non-generic collection, or pass it as <code>object</code>/an interface, and it boxes — a heap allocation, defeating the point. Use generic collections (<code>List&lt;GridCoord&gt;</code>) that hold the struct inline.</li>
+                        <li><strong>Mutable-struct surprises.</strong> Mutating a struct returned from a property or held in a non-<code>ref</code> way changes a <em>copy</em>, not the original. Prefer <code>readonly struct</code> for value-like data to avoid the footgun.</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section id="strings" class="lesson-section">
+                <h2>Strings &amp; StringBuilder</h2>
+                <p>String building is the single most common source of per-frame garbage, because HUDs update text every frame. Since strings are immutable, concatenation allocates a new string for the result <em>and</em> each intermediate:</p>
+
+                <pre><code class="language-csharp">// ❌ Allocates several strings EVERY frame the HUD updates.
+void Update()
+{
+    scoreLabel.text = "Score: " + score + " / " + target + " pts";
+}</code></pre>
+
+                <p>Two fixes, in order of preference:</p>
+                <ol>
+                    <li><strong>Don't build the string at all unless it changed.</strong> The cheapest string work is the work you skip. Cache the last value and only rebuild when it differs.</li>
+                    <li>When you must build one, reuse a <code>StringBuilder</code> — a mutable buffer you <code>Clear()</code> and refill instead of allocating fresh.</li>
+                </ol>
+
+                <pre><code class="language-csharp">readonly System.Text.StringBuilder _sb = new System.Text.StringBuilder(32);
+int _lastScore = -1;
+
+void Update()
+{
+    if (score == _lastScore) return;   // only rebuild on change
+    _lastScore = score;
+
+    _sb.Clear();
+    _sb.Append("Score: ").Append(score).Append(" / ")
+       .Append(target).Append(" pts");
+    scoreLabel.SetText(_sb);           // TMP takes a StringBuilder, no alloc
+}</code></pre>
+
+                <blockquote>
+                    <strong>💡 TextMeshPro's <code>SetText</code>.</strong> Assigning to <code>.text</code> takes a <code>string</code> (which you had to allocate). TMP's <code>SetText(StringBuilder)</code> and its numeric overloads write straight from your buffer with no managed allocation — the idiomatic garbage-free way to update on-screen numbers.
+                </blockquote>
+            </section>
+
+            <section id="nonalloc" class="lesson-section">
+                <h2>NonAlloc Physics APIs</h2>
+                <p>Physics queries are a sneaky allocator. The convenient forms return a freshly-allocated array every call — fine once, ruinous in <code>FixedUpdate</code>:</p>
+
+                <pre><code class="language-csharp">// ❌ Allocates a new Collider[] every physics step.
+void FixedUpdate()
+{
+    Collider[] hits = Physics.OverlapSphere(transform.position, radius);
+    foreach (var h in hits) Damage(h);
+}</code></pre>
+
+                <p>Unity provides <strong><code>NonAlloc</code> variants</strong> that write into a buffer <em>you</em> own and reuse. You allocate the array once, and each query fills it and returns how many results it wrote:</p>
+
+                <pre><code class="language-csharp">readonly Collider[] _hitBuffer = new Collider[16];   // allocated ONCE
+
+void FixedUpdate()
+{
+    int count = Physics.OverlapSphereNonAlloc(
+        transform.position, radius, _hitBuffer);
+    for (int i = 0; i &lt; count; i++) Damage(_hitBuffer[i]);
+}</code></pre>
+
+                <p>The same pattern exists across the physics API — <code>RaycastNonAlloc</code>, <code>SphereCastNonAlloc</code>, <code>OverlapBoxNonAlloc</code>, and 2D equivalents. Size the buffer for your worst realistic case; results beyond its length are simply dropped (the return count tells you if you hit the cap). One reused array replaces an allocation on every physics tick.</p>
+
+                <div class="card card-success">
+                    <h4>✅ The pattern behind all of these</h4>
+                    <p>Notice the shape repeating: <strong>allocate a reusable buffer once as a field, fill it many times.</strong> <code>StringBuilder</code>, <code>NonAlloc</code> physics, pooled objects, cached component references — they're the same idea applied to strings, physics results, GameObjects, and lookups respectively. "Allocate once, reuse" is the entire philosophy of garbage-free code.</p>
+                </div>
+            </section>
+
+            <section id="pooling" class="lesson-section">
+                <h2>Pooling &amp; Caching Lookups</h2>
+                <p>You met <strong>object pooling</strong> in Unity Intermediate — instead of <code>Instantiate</code>/<code>Destroy</code>ing bullets (which allocates and generates garbage), you keep a pool of inactive objects and recycle them. Unity 6 ships a built-in generic pool, <code>ObjectPool&lt;T&gt;</code> (namespace <code>UnityEngine.Pool</code>), so you no longer hand-roll one:</p>
+
+                <pre><code class="language-csharp">using UnityEngine.Pool;
+
+public class BulletSpawner : MonoBehaviour
+{
+    [SerializeField] Bullet _prefab;
+    ObjectPool&lt;Bullet&gt; _pool;
+
+    void Awake()
+    {
+        _pool = new ObjectPool&lt;Bullet&gt;(
+            createFunc:   () =&gt; Instantiate(_prefab),
+            actionOnGet:  b =&gt; b.gameObject.SetActive(true),
+            actionOnRelease: b =&gt; b.gameObject.SetActive(false),
+            actionOnDestroy: b =&gt; Destroy(b.gameObject),
+            defaultCapacity: 64, maxSize: 256);
+    }
+
+    public Bullet Fire()
+    {
+        var b = _pool.Get();        // reuses an inactive bullet — no Instantiate
+        b.OnDone = () =&gt; _pool.Release(b);  // return it when finished
+        return b;
+    }
+}</code></pre>
+
+                <p>The pool turns a per-shot <code>Instantiate</code> (heap allocation + GC pressure + the cost of building a GameObject) into a cheap activate/deactivate of an object that already exists. <code>UnityEngine.Pool</code> also offers <code>ListPool&lt;T&gt;</code>, <code>DictionaryPool&lt;T&gt;</code>, and friends for pooling the <em>temporary collections</em> that would otherwise allocate in a method.</p>
+
+                <p>The other everyday allocation-and-cost sink is repeated component lookups. <code>GetComponent</code> — and far worse, <code>FindObjectOfType</code>/<code>FindObjectsByType</code> — are not free, and calling them every frame is pure waste when the answer never changes:</p>
+
+                <pre><code class="language-csharp">// ❌ Looks up the Rigidbody every single frame.
+void Update() { GetComponent&lt;Rigidbody&gt;().AddForce(Vector3.up); }
+
+// ✅ Look it up ONCE, cache the reference, reuse it forever.
+Rigidbody _rb;
+void Awake() { _rb = GetComponent&lt;Rigidbody&gt;(); }
+void Update() { _rb.AddForce(Vector3.up); }</code></pre>
+
+                <div class="card card-warning">
+                    <h4>⚠️ <code>FindObjectsByType</code> in <code>Update</code> is a classic killer</h4>
+                    <p>Scene-wide searches like <code>FindObjectsByType&lt;Enemy&gt;()</code> scan the whole scene <em>and</em> allocate an array of results. Called once at startup: fine. Called every frame (as we'll see in the Lesson 2.5 stress scene): a catastrophe that shows up huge in both the CPU Timeline and the GC Alloc column. Cache the reference, or better, have objects register themselves into a list on spawn and remove on death.</p>
+                </div>
+            </section>
+
+            <section id="refactor" class="lesson-section">
+                <h2>A Before/After Refactor</h2>
+                <p>Let's put it together. Here's a plausible enemy-AI method that runs every frame and allocates on almost every line — a poster child for GC pressure. Read it and count the allocations:</p>
+
+                <pre><code class="language-csharp">using System.Linq;
+using System.Collections.Generic;
+using UnityEngine;
+
+public class EnemyAI : MonoBehaviour
+{
+    public float senseRadius = 8f;
+
+    void Update()
+    {
+        // 1) Allocates a new Collider[] every frame.
+        Collider[] near = Physics.OverlapSphere(transform.position, senseRadius);
+
+        // 2) LINQ: Where + OrderBy + ToList — several allocations + a closure
+        //    capturing 'transform.position'.
+        List&lt;Collider&gt; players = near
+            .Where(c =&gt; c.CompareTag("Player"))
+            .OrderBy(c =&gt; Vector3.Distance(c.transform.position, transform.position))
+            .ToList();
+
+        if (players.Count &gt; 0)
+        {
+            // 3) GetComponent every frame (no caching).
+            var target = players[0].GetComponent&lt;PlayerHealth&gt;();
+
+            // 4) String concatenation → new string(s) every frame.
+            Debug.Log("Targeting " + target.name + " at range " + senseRadius);
+        }
+    }
+}</code></pre>
+
+                <p>Four allocation sources, all on the hot path: the physics array, the LINQ chain plus its closure, the uncached <code>GetComponent</code>, and the string concat feeding <code>Debug.Log</code> (which also boxes <code>senseRadius</code>). Now the garbage-free rewrite — same behaviour, <strong>0&nbsp;B/frame</strong>:</p>
+
+                <pre><code class="language-csharp">using UnityEngine;
+
+public class EnemyAI : MonoBehaviour
+{
+    public float senseRadius = 8f;
+
+    // Allocate ONCE. Reused every frame.
+    readonly Collider[] _near = new Collider[32];
+
+    void Update()
+    {
+        // 1) NonAlloc fills our reusable buffer — no array allocation.
+        int count = Physics.OverlapSphereNonAlloc(
+            transform.position, senseRadius, _near);
+
+        // 2) Manual nearest-player scan — no LINQ, no closure, no ToList.
+        Collider best = null;
+        float bestSqr = float.MaxValue;
+        Vector3 self = transform.position;
+        for (int i = 0; i &lt; count; i++)
+        {
+            var c = _near[i];
+            if (!c.CompareTag("Player")) continue;
+            // sqrMagnitude avoids the sqrt in Distance — cheaper, still orders correctly.
+            float d = (c.transform.position - self).sqrMagnitude;
+            if (d &lt; bestSqr) { bestSqr = d; best = c; }
+        }
+
+        // 3) TryGetComponent: no allocation, and null-safe.
+        if (best != null &amp;&amp; best.TryGetComponent(out PlayerHealth target))
+        {
+            // 4) No per-frame logging on the hot path. If you must log,
+            //    gate it or use a marker instead of building strings.
+            target.MarkTargeted();
+        }
+    }
+}</code></pre>
+
+                <p>Line for line: the physics buffer is now a reused field; the LINQ chain became a plain <code>for</code> loop with a running best (and <code>sqrMagnitude</code> instead of <code>Distance</code> to skip a square root); <code>TryGetComponent</code> replaces the allocating <code>GetComponent</code>-then-null-check; and the per-frame string log is gone. Profile it and the GC Alloc for this method reads <strong>0&nbsp;B</strong> — and, because we cut the LINQ and the sqrt too, it's faster on the CPU as well. Garbage-free and cheaper: the two usually travel together.</p>
+
+                <blockquote>
+                    <strong>🔎 Don't do this everywhere.</strong> This level of hand-tuning belongs on the <em>hot path</em> — code that runs every frame or thousands of times. In tools, setup, menus, and cold code, LINQ's clarity and a bit of garbage cost you nothing a player will ever feel. Optimize where the Profiler points, and leave readable code readable everywhere else.
+                </blockquote>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Drive a method to 0 B</h3>
+                    <p><strong>Objective:</strong> Measure and eliminate allocations with the Profiler as your judge.</p>
+                    <ol>
+                        <li>Write a <code>MonoBehaviour</code> whose <code>Update</code> allocates deliberately: a <code>StringBuilder</code>-free HUD string, a small LINQ query over an array, and an <code>OverlapSphere</code>.</li>
+                        <li>Add a <code>ProfilerMarker</code> (Lesson 2.1) around the <code>Update</code> body. Enter Play mode, open the Profiler, switch Hierarchy to sort by <strong>GC Alloc</strong>, and record the bytes/frame.</li>
+                        <li>Refactor: cache the string with a change-check + <code>StringBuilder</code>, replace LINQ with a loop, and switch to <code>OverlapSphereNonAlloc</code> with a reusable buffer.</li>
+                        <li>Re-measure. Keep going until the GC Alloc for your marker reads <strong>0&nbsp;B</strong>.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What you should observe</summary>
+                        <p>Each fix drops the GC Alloc number in a visible step: NonAlloc removes the collider-array bytes, the loop removes the LINQ iterator/closure/ToList bytes, and the cached <code>StringBuilder</code> removes the string bytes. When all three are done the marker's GC Alloc is 0&nbsp;B/frame and, over time, the Memory module's per-frame allocation line goes flat — meaning the incremental GC has nothing to collect from this code. That flat line is the goal for every hot path.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Spot the hidden allocation</h3>
+                    <p>For each line, say whether it allocates managed memory and why: (a) <code>Debug.Log("hp=" + hp);</code> where <code>hp</code> is an <code>int</code>; (b) <code>foreach (var c in myList)</code> where <code>myList</code> is a <code>List&lt;Collider&gt;</code>; (c) <code>list.Sort((a,b) =&gt; a.score.CompareTo(b.score));</code> with no captured locals; (d) <code>enemies.Where(e =&gt; e.hp &lt; threshold).Count();</code> where <code>threshold</code> is a local.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>Allocates</strong> — string concatenation builds a new string, and the <code>int</code> boxes into the concat. (b) <strong>No allocation</strong> — <code>List&lt;T&gt;</code>'s enumerator is a struct, so <code>foreach</code> over it doesn't allocate (foreach over an <em>interface</em> like <code>IEnumerable&lt;T&gt;</code> would). (c) <strong>No capture, but…</strong> a non-capturing lambda can be cached by the compiler, so it usually doesn't allocate per call — however <code>List.Sort</code> with a comparer delegate can still allocate a comparer wrapper the first time; safest is a cached comparer. (d) <strong>Allocates</strong> — the <code>Where</code> iterator plus a closure capturing <code>threshold</code>. The lesson: concatenation and capturing-LINQ almost always allocate; generic-collection <code>foreach</code> usually doesn't. When unsure, measure with a marker.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Unity 6 uses an incremental GC. Does that mean per-frame allocations are now fine?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Incremental spreads the cost but doesn't remove it — more garbage still means more collection work.">A) Yes — incremental GC eliminates the cost of allocating</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Incremental GC spreads collection across frames, easing the worst pauses, but it still costs CPU and can still spike under pressure. The goal is still near-zero hot-path allocation.">B) No — it spreads the cost across frames but still runs more when you allocate more; aim for zero on the hot path</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's on by default in Unity 6, but that doesn't license unlimited garbage.">C) Yes — as long as you enable it in Player Settings</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why is a small, short-lived data bundle often better as a <code>struct</code> than a <code>class</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Structs aren't automatically faster to access; the win is about where they live in memory.">A) Structs execute their methods on a background thread</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A struct is a value type — a local lives on the stack/inline and never allocates on the managed heap, so it creates no GC work, unlike a class.">B) A struct is a value type — a local doesn't allocate on the managed heap, so it makes no GC work</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Both can hold the same data; the difference is heap vs stack/value semantics.">C) A struct can hold more fields than a class</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> What does <code>Physics.OverlapSphereNonAlloc</code> give you over <code>Physics.OverlapSphere</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! NonAlloc writes results into a buffer you own and reuse, returning a count — so it allocates nothing per call, unlike the plain version that returns a fresh array each time.">A) It writes into a reusable buffer you own and returns a count — no per-call array allocation</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's not more accurate — same query, just no allocation.">B) It detects more colliders per call</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't run on the GPU; it's a CPU physics query with a caller-owned buffer.">C) It runs the query on the GPU</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Which is the single best fix for a HUD that rebuilds <code>"Score: " + score</code> every frame?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Calling GC.Collect yourself makes hitches worse, not better.">A) Call <code>GC.Collect()</code> each frame to clean up the strings</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Only rebuild when the value changes, and when you do, reuse a StringBuilder and feed TMP's SetText — no per-frame string allocation.">B) Only rebuild when <code>score</code> changes, and build with a reused <code>StringBuilder</code> into <code>SetText</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Moving to LateUpdate changes when it runs, not that it allocates every time.">C) Move the same concatenation into <code>LateUpdate</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Unity 6's <strong>incremental GC</strong> eases pauses but still costs CPU and can spike — the goal is <strong>near-zero allocation on the hot path</strong> (GC Alloc = 0&nbsp;B).</li>
+                        <li>Hidden garbage comes from <strong>boxing, capturing closures, LINQ, string concatenation, <code>params</code>, and <code>.ToArray()</code>/<code>.ToList()</code></strong>, plus any per-frame <code>new</code> of a class.</li>
+                        <li>Prefer small <strong><code>readonly struct</code>s</strong> for short-lived data to keep it off the heap — but beware copy cost and boxing.</li>
+                        <li>Build strings with a reused <strong><code>StringBuilder</code></strong> and rebuild only on change; feed TMP's <code>SetText</code>.</li>
+                        <li>Use <strong><code>NonAlloc</code> physics APIs</strong> with a caller-owned buffer instead of the array-returning versions.</li>
+                        <li>Reuse objects with <strong><code>ObjectPool&lt;T&gt;</code></strong> and pooled collections; <strong>cache component lookups</strong> and never <code>FindObjectsByType</code> in <code>Update</code>.</li>
+                        <li>Every technique is one idea — <strong>allocate once, reuse</strong> — and garbage-free code is usually faster code too.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>We've squeezed the CPU and the managed heap. But even perfectly garbage-free C# can be throttled by the <em>other</em> side of the frame: how many times the CPU has to tell the GPU to draw something. In <strong>Lesson 2.4: Draw Calls &amp; Batching</strong>, we move to rendering cost — what a draw call really is, and how the SRP Batcher, GPU Instancing, and Unity 6's GPU Resident Drawer collapse thousands of them.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧹 Zero is the target</h3>
+                    <p>When the Memory module's per-frame allocation line goes flat, the incremental GC has nothing to do, and your frame times stop hitching. "Allocate once, reuse" on every hot path is how professionals keep it that way.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_07.html" class="prev-lesson">← Previous: Hunting Memory — The Memory Profiler</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_09.html" class="next-lesson">Next: Draw Calls &amp; Batching →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

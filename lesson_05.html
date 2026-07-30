@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Mini-project: build a game bootstrapper. A Bootstrapper MonoBehaviour in an init scene constructs a small service container, registers IAudioService, ISaveService, and IInputService behind interfaces, initializes them in order with async/Awaitable, then loads the main scene. Full scripts and numbered steps.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 1.5: A Game Bootstrapper with a Service Container — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 1: Advanced Architecture &amp; Async</a></li>
+            <li aria-current="page">Lesson 1.5: A Game Bootstrapper with a Service Container</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🚀 Lesson 1.5: Mini-Project — A Game Bootstrapper with a Service Container</h1>
+                <p class="lead">Time to make the whole module click into one thing you'll reuse in every serious project: a <strong>bootstrapper</strong>. It's the game's front door — a tiny init scene whose only job is to stand up the systems the game needs, in the right order, before anything gameplay-related runs. You'll build a service container (Lesson 1.2), register <code>IAudioService</code>, <code>ISaveService</code>, and <code>IInputService</code> behind interfaces, initialize them <em>in order</em> and <em>asynchronously</em> with <code>Awaitable</code> (Lesson 1.3), and only then load the main scene. It sits in its own assembly (Lesson 1.1) and is a textbook composition root. This is the pattern studios open a codebase with.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build</h2>
+                    <p>By the end of this build-along, you will have:</p>
+                    <ul>
+                        <li>A reusable <code>ServiceContainer</code> that registers and resolves services behind interfaces</li>
+                        <li>Three services — <code>IAudioService</code>, <code>ISaveService</code>, <code>IInputService</code> — each with an async <code>InitializeAsync</code></li>
+                        <li>A <code>Bootstrapper</code> <code>MonoBehaviour</code> in a dedicated init scene that wires and initializes everything in a defined order</li>
+                        <li>An async boot sequence that awaits each service, then loads the main scene — with cancellation wired to the destroy token</li>
+                        <li>A clear picture of how architecture, DI, and async combine into a real startup flow</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 75 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> All of Module 1 — assemblies (1.1), DI (1.2), Awaitable (1.3), patterns (1.4)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why a Bootstrapper?</a></li>
+                        <li><a href="#flow" class="toc-link">The Boot Sequence at a Glance</a></li>
+                        <li><a href="#step1" class="toc-link">Step 1: The Container &amp; Interfaces</a></li>
+                        <li><a href="#step2" class="toc-link">Step 2: The Service Implementations</a></li>
+                        <li><a href="#step3" class="toc-link">Step 3: The Bootstrapper</a></li>
+                        <li><a href="#step4" class="toc-link">Step 4: Scenes &amp; Running It</a></li>
+                        <li><a href="#built" class="toc-link">What You Built &amp; How to Extend It</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why a Bootstrapper?</h2>
+                <p>Without a bootstrapper, initialization scatters. Each system wakes up in its own <code>Awake</code>/<code>Start</code>, in an order Unity decides (and you fight with the Script Execution Order settings), each grabbing its own dependencies via singletons. Load order bugs, "the save system wasn't ready yet" null references, and half-initialized state follow.</p>
+                <p>A bootstrapper fixes this by making startup <strong>explicit and ordered</strong>. One object, running first in a dedicated scene, does the whole dance: create the services, initialize them in the sequence they depend on, and hand control to the game only when everything is ready. It's the runtime embodiment of the composition root from Lesson 1.2 — the single place that knows concrete types and wires the object graph.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 The init-scene pattern</h4>
+                    <p>The <strong>init scene</strong> (or "boot scene") is a nearly empty scene containing just the bootstrapper. It's the first scene in Build Settings, so it always runs before gameplay. Because services are created here and marked <code>DontDestroyOnLoad</code>, they survive the load into the main scene — giving you a clean, deterministic startup every run.</p>
+                </div>
+            </section>
+
+            <section id="flow" class="lesson-section">
+                <h2>The Boot Sequence at a Glance</h2>
+                <p>Before the code, the shape of what we're building. The bootstrapper walks left to right: assemble the container, register services behind interfaces, initialize them asynchronously in order, then load the main scene.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 920 340" role="img" aria-labelledby="bootTitle bootDesc">
+                        <title id="bootTitle">The bootstrapper's boot sequence from composition root to loaded game</title>
+                        <desc id="bootDesc">A left-to-right flow of four stages. Stage one, Composition Root: the Bootstrapper creates a ServiceContainer. An arrow leads to stage two, Register: three interfaces IAudioService, ISaveService, and IInputService are registered with their concrete implementations. An arrow leads to stage three, Async Init: each service's InitializeAsync is awaited in order — audio, then save, then input — shown as a vertical sequence with await markers. A final arrow leads to stage four, Load: SceneManager loads the Main scene, and the game begins.</desc>
+
+                        <rect x="0" y="0" width="920" height="340" rx="8" fill="#22262d"/>
+
+                        <defs>
+                            <marker id="aboot" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#eaeaea"/>
+                            </marker>
+                        </defs>
+
+                        <!-- Stage 1 -->
+                        <rect x="20" y="60" width="196" height="220" rx="8" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="118" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#fff">1 · Composition Root</text>
+                        <text x="118" y="106" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#cfe0ff">Bootstrapper.Awake()</text>
+                        <rect x="44" y="140" width="148" height="64" rx="6" fill="#2f3945" stroke="#45525f"/>
+                        <text x="118" y="168" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#ffd79a">new</text>
+                        <text x="118" y="186" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#e6e6e6">ServiceContainer()</text>
+                        <text x="118" y="252" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">the one place that</text>
+                        <text x="118" y="268" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">names concretes</text>
+
+                        <line x1="216" y1="170" x2="242" y2="170" stroke="#eaeaea" stroke-width="2.5" marker-end="url(#aboot)"/>
+
+                        <!-- Stage 2 -->
+                        <rect x="244" y="60" width="196" height="220" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="342" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">2 · Register</text>
+                        <g font-family="'Consolas',monospace" font-size="10">
+                            <rect x="262" y="104" width="160" height="46" rx="5" fill="#2f4a5a" stroke="#5b90a0"/>
+                            <text x="342" y="122" text-anchor="middle" fill="#8fd0ff">IAudioService</text>
+                            <text x="342" y="139" text-anchor="middle" fill="#9be6b0">→ AudioService</text>
+                            <rect x="262" y="158" width="160" height="46" rx="5" fill="#2f4a5a" stroke="#5b90a0"/>
+                            <text x="342" y="176" text-anchor="middle" fill="#8fd0ff">ISaveService</text>
+                            <text x="342" y="193" text-anchor="middle" fill="#9be6b0">→ FileSaveService</text>
+                            <rect x="262" y="212" width="160" height="46" rx="5" fill="#2f4a5a" stroke="#5b90a0"/>
+                            <text x="342" y="230" text-anchor="middle" fill="#8fd0ff">IInputService</text>
+                            <text x="342" y="247" text-anchor="middle" fill="#9be6b0">→ InputService</text>
+                        </g>
+
+                        <line x1="440" y1="170" x2="466" y2="170" stroke="#eaeaea" stroke-width="2.5" marker-end="url(#aboot)"/>
+
+                        <!-- Stage 3 -->
+                        <rect x="468" y="60" width="220" height="220" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="578" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">3 · Async Init (in order)</text>
+                        <g font-family="'Consolas',monospace" font-size="10">
+                            <rect x="486" y="104" width="184" height="30" rx="5" fill="#30363f" stroke="#454d57"/>
+                            <text x="500" y="123" fill="#ffd79a">await</text>
+                            <text x="548" y="123" fill="#e6e6e6">audio.InitializeAsync()</text>
+                            <rect x="486" y="150" width="184" height="30" rx="5" fill="#30363f" stroke="#454d57"/>
+                            <text x="500" y="169" fill="#ffd79a">await</text>
+                            <text x="548" y="169" fill="#e6e6e6">save.InitializeAsync()</text>
+                            <rect x="486" y="196" width="184" height="30" rx="5" fill="#30363f" stroke="#454d57"/>
+                            <text x="500" y="215" fill="#ffd79a">await</text>
+                            <text x="548" y="215" fill="#e6e6e6">input.InitializeAsync()</text>
+                        </g>
+                        <text x="578" y="252" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">each finishes before the next</text>
+                        <text x="578" y="268" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">frame loop never blocks</text>
+
+                        <line x1="688" y1="170" x2="714" y2="170" stroke="#eaeaea" stroke-width="2.5" marker-end="url(#aboot)"/>
+
+                        <!-- Stage 4 -->
+                        <rect x="716" y="60" width="184" height="220" rx="8" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="808" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#fff">4 · Load</text>
+                        <rect x="736" y="120" width="148" height="60" rx="6" fill="#26402f" stroke="#4f9e77"/>
+                        <text x="808" y="146" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#bfe6cf">SceneManager</text>
+                        <text x="808" y="164" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#bfe6cf">.LoadSceneAsync</text>
+                        <text x="808" y="210" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#9be6b0">▶ Main scene</text>
+                        <text x="808" y="232" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#bfe6cf">game begins</text>
+                    </svg>
+                    <figcaption>Figure 1: The boot sequence. The <strong style="color:#5b76a0">Bootstrapper</strong> is the composition root that creates the container, <strong style="color:#8fd0ff">registers</strong> each service behind its interface, <strong style="color:#ffd79a">awaits</strong> their initialization in a defined order without blocking the frame loop, then <strong style="color:#9be6b0">loads</strong> the main scene. This is the flow the rest of the lesson implements.</figcaption>
+                </figure>
+            </section>
+
+            <section id="step1" class="lesson-section">
+                <h2>Step 1: The Container &amp; Interfaces</h2>
+                <p>Start with the container. This is the Lesson 1.2 container, trimmed to what the bootstrapper needs — register a shared instance, resolve it later.</p>
+                <pre><code class="language-csharp">using System;
+using System.Collections.Generic;
+
+namespace Studio.Core
+{
+    public class ServiceContainer
+    {
+        private readonly Dictionary&lt;Type, object&gt; _services = new();
+
+        public void Register&lt;TInterface&gt;(TInterface instance)
+            =&gt; _services[typeof(TInterface)] = instance;
+
+        public TInterface Resolve&lt;TInterface&gt;()
+        {
+            if (_services.TryGetValue(typeof(TInterface), out var s))
+                return (TInterface)s;
+            throw new InvalidOperationException(
+                $"No service registered for {typeof(TInterface).Name}");
+        }
+    }
+}</code></pre>
+                <p>Now the three service contracts. Each has an async <code>InitializeAsync</code> so startup work (loading an audio bank, reading a save file, binding input) can happen without blocking, and takes a <code>CancellationToken</code> so a cancelled boot unwinds cleanly.</p>
+                <pre><code class="language-csharp">using System.Threading;
+using UnityEngine;
+
+namespace Studio.Core
+{
+    public interface IGameService
+    {
+        Awaitable InitializeAsync(CancellationToken token);
+    }
+
+    public interface IAudioService : IGameService
+    {
+        void Play(string clipId);
+        void SetVolume(float volume);
+    }
+
+    public interface ISaveService : IGameService
+    {
+        void Save(string key, string value);
+        string Load(string key);
+    }
+
+    public interface IInputService : IGameService
+    {
+        Vector2 MoveAxis { get; }
+        bool JumpPressed { get; }
+    }
+}</code></pre>
+                <p>A shared <code>IGameService</code> base gives every service the same <code>InitializeAsync</code> shape, which lets the bootstrapper treat them uniformly. All of this lives in <code>Studio.Core</code> — the bottom assembly from Lesson 1.1 that everything else depends down on.</p>
+            </section>
+
+            <section id="step2" class="lesson-section">
+                <h2>Step 2: The Service Implementations</h2>
+                <p>Now concrete implementations. They're deliberately simple — the point is the <em>shape</em>, especially how each <code>InitializeAsync</code> does real async work and honors the token. Note the audio and save services do a brief background hop or frame-yield to model genuine startup latency.</p>
+                <pre><code class="language-csharp">using System.Threading;
+using UnityEngine;
+using Studio.Core;
+
+namespace Studio.Services
+{
+    public class AudioService : IAudioService
+    {
+        public async Awaitable InitializeAsync(CancellationToken token)
+        {
+            // Simulate loading an audio bank off the main thread.
+            await Awaitable.BackgroundThreadAsync();
+            System.Threading.Thread.Sleep(50);      // stand-in for real I/O
+            await Awaitable.MainThreadAsync();
+            token.ThrowIfCancellationRequested();
+            Debug.Log("[Audio] ready");
+        }
+
+        public void Play(string clipId) =&gt; Debug.Log($"[Audio] play {clipId}");
+        public void SetVolume(float volume) { /* set mixer volume */ }
+    }
+
+    public class FileSaveService : ISaveService
+    {
+        public async Awaitable InitializeAsync(CancellationToken token)
+        {
+            // Simulate reading a save file across a couple of frames.
+            await Awaitable.NextFrameAsync(token);
+            await Awaitable.NextFrameAsync(token);
+            Debug.Log("[Save] ready");
+        }
+
+        public void Save(string key, string value)
+            =&gt; PlayerPrefs.SetString(key, value);
+        public string Load(string key)
+            =&gt; PlayerPrefs.GetString(key, string.Empty);
+    }
+
+    public class InputService : IInputService
+    {
+        public Vector2 MoveAxis { get; private set; }
+        public bool JumpPressed { get; private set; }
+
+        public async Awaitable InitializeAsync(CancellationToken token)
+        {
+            // Enable the Input System action maps here, then yield once.
+            await Awaitable.NextFrameAsync(token);
+            Debug.Log("[Input] ready");
+        }
+    }
+}</code></pre>
+                <p>These sit in a <code>Studio.Services</code> assembly that references <code>Studio.Core</code> — services depend down on the interfaces, exactly the dependency direction from Lesson 1.1.</p>
+
+                <blockquote>
+                    <strong>💡 Order matters, and it's explicit.</strong> Because each <code>InitializeAsync</code> is <code>await</code>ed one after another, save can safely assume audio is up, and input can assume both are. If save depended on audio's mixer being ready, this ordering guarantees it. Ordering initialization is one of the main reasons a bootstrapper exists.
+                </blockquote>
+            </section>
+
+            <section id="step3" class="lesson-section">
+                <h2>Step 3: The Bootstrapper</h2>
+                <p>The centerpiece. It's a <code>MonoBehaviour</code> in the init scene that creates the container, registers the services, initializes them in order with <code>Awaitable</code>, exposes the container to the rest of the game, and loads the main scene. It also survives the load (<code>DontDestroyOnLoad</code>) and threads the destroy token through every await.</p>
+                <pre><code class="language-csharp">using System.Threading;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+using Studio.Core;
+using Studio.Services;
+
+namespace Studio.Boot
+{
+    public class Bootstrapper : MonoBehaviour
+    {
+        [SerializeField] private string _mainSceneName = "Main";
+
+        // The composed container, made available to the rest of the game.
+        public static ServiceContainer Services { get; private set; }
+
+        async void Awake()
+        {
+            // This object (and its services) must survive the scene load.
+            DontDestroyOnLoad(gameObject);
+
+            try
+            {
+                await BootAsync(destroyCancellationToken);
+            }
+            catch (System.OperationCanceledException)
+            {
+                // Expected if the app quits mid-boot — swallow quietly.
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogException(e);   // surface real boot failures
+            }
+        }
+
+        private async Awaitable BootAsync(CancellationToken token)
+        {
+            var container = new ServiceContainer();
+
+            // 1) Create the concrete services.
+            var audio = new AudioService();
+            var save  = new FileSaveService();
+            var input = new InputService();
+
+            // 2) Register each behind its interface.
+            container.Register&lt;IAudioService&gt;(audio);
+            container.Register&lt;ISaveService&gt;(save);
+            container.Register&lt;IInputService&gt;(input);
+
+            // 3) Initialize IN ORDER — each finishes before the next starts.
+            await audio.InitializeAsync(token);
+            await save.InitializeAsync(token);
+            await input.InitializeAsync(token);
+
+            // 4) Publish the container, then hand off to the game.
+            Services = container;
+            Debug.Log("[Boot] all services ready → loading main scene");
+
+            await SceneManager.LoadSceneAsync(_mainSceneName);
+        }
+    }
+}</code></pre>
+                <p>Read the four numbered blocks against Figure 1 — they're the same four stages. Everything downstream now reaches its dependencies through <code>Bootstrapper.Services.Resolve&lt;T&gt;()</code>, or (better) gets them injected by a scene-level installer that reads from that container. A gameplay object, for instance:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using Studio.Core;
+using Studio.Boot;
+
+public class Player : MonoBehaviour
+{
+    private IAudioService _audio;
+
+    void Start()
+    {
+        // Pull the ready-made service the bootstrapper composed.
+        _audio = Bootstrapper.Services.Resolve&lt;IAudioService&gt;();
+    }
+
+    void Footstep() =&gt; _audio.Play("footstep");
+}</code></pre>
+
+                <div class="card card-warning">
+                    <h4>⚠️ <code>async void Awake</code> — the sanctioned exception</h4>
+                    <p><code>Awake</code> must return <code>void</code>, so this is one of the legitimate <code>async void</code> entry points from Lesson 1.3 — and note it does the right thing: the entire body is wrapped in try/catch so no exception escapes silently, and the real work lives in an awaitable <code>BootAsync</code> that <em>can</em> be awaited and cancelled. Never let the boot's exceptions vanish; a failed startup you can't see is the worst kind of bug.</p>
+                </div>
+            </section>
+
+            <section id="step4" class="lesson-section">
+                <h2>Step 4: Scenes &amp; Running It</h2>
+                <p>Wire it up in the editor:</p>
+                <ol>
+                    <li>Create two scenes: <code>Boot</code> (nearly empty) and <code>Main</code> (your gameplay scene).</li>
+                    <li>In <code>Boot</code>, add an empty GameObject named <em>Bootstrapper</em> and attach the <code>Bootstrapper</code> component. Set <em>Main Scene Name</em> to <code>Main</code>.</li>
+                    <li>Open <strong>File ▸ Build Settings</strong> and add both scenes. Drag <code>Boot</code> to the <strong>top</strong> so it loads first (index 0). Add <code>Main</code> below it.</li>
+                    <li>Put the scripts in their assemblies: container and interfaces in <code>Studio.Core</code>, implementations in <code>Studio.Services</code>, the bootstrapper in <code>Studio.Boot</code> (referencing both). This is the Lesson 1.1 layout in miniature.</li>
+                    <li>Press Play from the <code>Boot</code> scene. Watch the Console: <code>[Audio] ready</code> → <code>[Save] ready</code> → <code>[Input] ready</code> → <code>[Boot] all services ready</code>, then the Main scene loads.</li>
+                </ol>
+                <p>The ordered log is the proof: services come up one at a time, in the sequence you declared, and the game only starts once they're all ready. Stop Play mid-boot and the <code>OperationCanceledException</code> path unwinds it cleanly instead of resuming into a torn-down app.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Checkpoint</h4>
+                    <p>If your Console shows the four ready-messages in order followed by the Main scene loading, you've built a working composition root with ordered async initialization. That's a genuine, shippable startup architecture — not a toy.</p>
+                </div>
+            </section>
+
+            <section id="built" class="lesson-section">
+                <h2>What You Built &amp; How to Extend It</h2>
+                <p>You assembled every Module 1 idea into one artifact: a <strong>bootstrapper</strong> that is a composition root (1.2), lives in layered assemblies (1.1), initializes services with <code>Awaitable</code> and a cancellation token (1.3), and is the seed for patterns like an event bus (1.4). The services are swappable behind interfaces, the startup order is explicit, and gameplay code stays ignorant of concrete types.</p>
+                <h3>Ways to grow it</h3>
+                <ul>
+                    <li><strong>A loading screen with progress.</strong> Have <code>BootAsync</code> report progress (e.g. an <code>IProgress&lt;float&gt;</code> or an event per service) and drive a progress bar in the Boot scene — trivial now that init is sequential and awaited.</li>
+                    <li><strong>Parallel where safe.</strong> Services with no interdependency can init concurrently: <code>await Awaitable.WhenAll(...)</code>-style patterns (or await several started operations together) shorten boot time while keeping the ordered ones ordered.</li>
+                    <li><strong>Adopt a real DI framework.</strong> Swap the hand-rolled container for <strong>VContainer</strong>: register in a <code>LifetimeScope</code>, let it auto-inject into MonoBehaviours, and the bootstrapper shrinks. The concepts map one-to-one.</li>
+                    <li><strong>Event-driven readiness.</strong> Publish a <code>ServicesReady</code> event on the bus from Lesson 1.4 so any system can react to boot completion without the bootstrapper knowing about it.</li>
+                    <li><strong>Graceful failure.</strong> If a service's <code>InitializeAsync</code> throws (corrupt save, missing audio bank), catch it per-service and fall back to a safe default rather than aborting the whole boot.</li>
+                </ul>
+
+                <blockquote>
+                    <strong>🎓 Module 1, complete.</strong> You can now structure a large project, wire it with dependency injection, control time with async/await, apply scaling patterns, and stand it all up from a clean bootstrapper. That's the architectural foundation the rest of Unity Advanced builds performance, rendering, netcode, and tooling on top of.
+                </blockquote>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Add a fourth service with a progress bar</h3>
+                    <p><strong>Objective:</strong> Extend the boot flow and surface its progress.</p>
+                    <ol>
+                        <li>Add an <code>IContentService : IGameService</code> whose <code>InitializeAsync</code> yields several frames to simulate loading content.</li>
+                        <li>Register and initialize it in the bootstrapper, in order after input.</li>
+                        <li>Report progress: after each service completes, update a UI <code>Slider</code> in the Boot scene (e.g. 1/4, 2/4, …). Have <code>BootAsync</code> take an <code>IProgress&lt;float&gt;</code> and call <code>Report</code> after each await.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ Approach</summary>
+                        <p>Pass an <code>IProgress&lt;float&gt;</code> into <code>BootAsync</code>; after each <code>await service.InitializeAsync(token)</code>, call <code>progress.Report((float)done / total)</code>. Because the services init sequentially, the progress values are naturally monotonic. A <code>Progress&lt;float&gt;</code> created on the main thread marshals its callback back to the main thread, so updating the <code>Slider</code> from it is safe.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Make boot cancellable and prove it</h3>
+                    <p>Add a "cancel boot" path: create a linked <code>CancellationTokenSource</code> (linked to <code>destroyCancellationToken</code>) and cancel it from a debug key. Confirm that cancelling mid-boot (e.g. during the save service's frame-yields) stops the sequence and does <em>not</em> load the main scene, and that the <code>OperationCanceledException</code> is caught quietly rather than logged as an error.</p>
+                    <details>
+                        <summary>✅ Expected behavior</summary>
+                        <p>Because each <code>InitializeAsync</code> passes the token into its awaits and/or calls <code>ThrowIfCancellationRequested()</code>, cancelling throws <code>OperationCanceledException</code> at the next suspension point. That unwinds <code>BootAsync</code> before <code>LoadSceneAsync</code> is reached, so the main scene never loads. The bootstrapper's dedicated <code>catch (OperationCanceledException)</code> swallows it — cancellation is expected, not an error — while a genuine failure still hits the <code>Debug.LogException</code> branch.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why does the bootstrapper live in its own init scene set first in Build Settings?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Scene order isn't about rendering; it's about what runs first.">A) So its graphics render before the main scene's</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Being the first scene guarantees the bootstrapper runs before any gameplay, giving a deterministic startup.">B) So it always runs before gameplay, giving a deterministic, ordered startup</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Scene index doesn't change compile order; assemblies do that.">C) So its scripts compile before the others</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> The services are initialized with sequential <code>await</code>s rather than all at once. What does that guarantee?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Awaiting each in turn means each service finishes before the next begins, so later services can rely on earlier ones being ready.">A) Each service finishes initializing before the next starts, so ordering dependencies hold</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Sequential awaits don't use extra threads; they order completion.">B) Each service runs on its own thread</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't skip anything; it orders everything.">C) Only the first service actually initializes</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why is <code>async void Awake</code> acceptable here when the course warns against <code>async void</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It's not that async void is fine generally; Awake is a special entry point.">A) Because <code>async void</code> is always fine inside MonoBehaviours</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Awake is a top-level engine entry point that must return void, and the body is wrapped in try/catch with the real work in an awaitable BootAsync.">B) <code>Awake</code> is a top-level entry point that must return void, and its body is wrapped in try/catch with the real work in an awaitable method</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Return type doesn't disable exceptions; the try/catch handles them.">C) Because <code>void</code> methods can't throw exceptions</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> How does gameplay code get the audio service after boot?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="There's no singleton here; that's the pattern we replaced.">A) <code>AudioService.Instance</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Code resolves the ready-made service from the container the bootstrapper composed and published, e.g. Bootstrapper.Services.Resolve<IAudioService>().">B) By resolving it from the container the bootstrapper composed, e.g. <code>Bootstrapper.Services.Resolve&lt;IAudioService&gt;()</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="FindObjectOfType is the coupling we're avoiding, and services aren't scene objects here.">C) <code>FindObjectOfType&lt;AudioService&gt;()</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A <strong>bootstrapper</strong> is the game's front door — a composition root in a first-loaded init scene that stands up systems in a deterministic order.</li>
+                        <li>It <strong>creates a container</strong>, <strong>registers services behind interfaces</strong> (<code>IAudioService</code>, <code>ISaveService</code>, <code>IInputService</code>), and publishes the container for the rest of the game.</li>
+                        <li>Services are <strong>initialized in order</strong> with <code>await service.InitializeAsync(token)</code>, so later services can rely on earlier ones — without blocking the frame loop.</li>
+                        <li>Cancellation flows through <code>destroyCancellationToken</code>; <code>async void Awake</code> is the sanctioned entry point, wrapped in try/catch with the real work in an awaitable <code>BootAsync</code>.</li>
+                        <li>The whole thing sits in layered assemblies and is easily extended with progress bars, parallel init, a real DI framework, or event-driven readiness.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Module 1 gave you an architecture that scales. Now we make sure it's <em>fast</em>. Module 2 opens the performance track: in <strong>Lesson 2.1: The Profiler in Depth</strong>, you'll learn to measure before you optimize — reading the Profiler window frame by frame to find where time actually goes, so every optimization that follows is aimed at a real bottleneck.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🚀 You have a front door</h3>
+                    <p>A bootstrapper that composes, orders, and awaits your services, then hands off to the game. Reuse it in every project — it's the shape a professional Unity codebase starts from.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_04.html" class="prev-lesson">← Previous: Scaling Design Patterns</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_06.html" class="next-lesson">Next: The Profiler in Depth →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

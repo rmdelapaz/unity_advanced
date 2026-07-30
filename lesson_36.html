@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Automate Unity 6 builds with continuous integration: command-line batchmode builds, a C# BuildScript calling BuildPipeline.BuildPlayer, GitHub Actions with game-ci/unity-builder, Unity Build Automation, CI licensing, artifacts and versioning.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 8.2: Automated &amp; Cloud Builds (CI/CD) — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 8: Testing, CI &amp; Shipping</a></li>
+            <li aria-current="page">Lesson 8.2: Automated &amp; Cloud Builds (CI/CD)</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>⚙️ Lesson 8.2: Automated &amp; Cloud Builds (CI/CD)</h1>
+                <p class="lead">You can build your game — <em>File ▸ Build</em>, wait, done. But building by hand is slow, forgettable, and irreproducible: which platform settings were on? did the tests pass first? was it the committed code or your uncommitted tweaks? <strong>Continuous integration</strong> answers all three by having a server build and test your project automatically on every push. This lesson takes you from the command line that drives Unity headlessly, through a C# build script, to a real GitHub Actions pipeline — and the cloud alternatives when you'd rather not manage machines.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Run Unity headlessly with <code>-batchmode -quit -projectPath -executeMethod -buildTarget</code></li>
+                        <li>Write a C# <code>BuildScript</code> that calls <code>BuildPipeline.BuildPlayer</code> with <code>BuildPlayerOptions</code></li>
+                        <li>Explain what <strong>CI/CD</strong> is and why it beats building by hand</li>
+                        <li>Configure a minimal <strong>GitHub Actions</strong> workflow using <code>game-ci/unity-builder</code></li>
+                        <li>Weigh self-hosted CI against <strong>Unity Build Automation</strong> (formerly Cloud Build)</li>
+                        <li>Handle Unity <strong>licensing/activation</strong> in CI and produce versioned <strong>artifacts</strong></li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 70 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 8.1 (you'll run your tests in CI); Git basics; a project under version control</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#cicd" class="toc-link">What CI/CD Buys You</a></li>
+                        <li><a href="#batch" class="toc-link">Driving Unity from the Command Line</a></li>
+                        <li><a href="#buildscript" class="toc-link">A C# BuildScript</a></li>
+                        <li><a href="#pipeline" class="toc-link">The Pipeline, End to End</a></li>
+                        <li><a href="#github" class="toc-link">GitHub Actions with game-ci</a></li>
+                        <li><a href="#licensing" class="toc-link">Licensing &amp; Activation in CI</a></li>
+                        <li><a href="#cloud" class="toc-link">Unity Build Automation</a></li>
+                        <li><a href="#versioning" class="toc-link">Artifacts &amp; Versioning</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="cicd" class="lesson-section">
+                <h2>What CI/CD Buys You</h2>
+                <p><strong>Continuous Integration (CI)</strong> means every change pushed to the repository is automatically built and tested by a server, so integration problems surface within minutes of the commit that caused them. <strong>Continuous Delivery/Deployment (CD)</strong> extends that: a successful build is automatically packaged and handed to testers, a store, or players.</p>
+                <p>The concrete wins: builds are <strong>reproducible</strong> (a clean checkout on a clean machine, not your cluttered working copy), <strong>guarded</strong> (the pipeline runs Lesson 8.1's tests and refuses to ship a red build), and <strong>parallel</strong> (Windows, macOS, Android, and WebGL players from one push while you keep working). The moment a teammate breaks the build, everyone knows — not three days later when someone tries to make a release.</p>
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>A <strong>CI runner</strong> (or "agent") is the machine that executes your pipeline: it checks out the commit, restores the Unity project, activates a license, runs tests, invokes the build, and uploads the result. It can be a cloud VM spun up per job (GitHub-hosted), a machine you own (self-hosted), or Unity's own build farm.</p>
+                </div>
+            </section>
+
+            <section id="batch" class="lesson-section">
+                <h2>Driving Unity from the Command Line</h2>
+                <p>Every automated Unity build rests on one fact: the Editor can run <strong>without its window</strong>, driven entirely by command-line arguments. This is <em>batch mode</em>. The canonical invocation:</p>
+                <pre><code class="language-none">Unity -batchmode -quit -nographics \
+      -projectPath /path/to/Project \
+      -buildTarget StandaloneWindows64 \
+      -executeMethod BuildScript.PerformBuild \
+      -logFile -</code></pre>
+                <p>Each flag earns its place:</p>
+                <ul>
+                    <li><code>-batchmode</code> — no interactive Editor UI; suppresses dialogs so nothing blocks waiting for a click.</li>
+                    <li><code>-quit</code> — exit the Editor when the invoked method returns (omit it and the process hangs open forever on the runner).</li>
+                    <li><code>-nographics</code> — don't initialise a graphics device; fine for building and headless tests on a GPU-less server.</li>
+                    <li><code>-projectPath</code> — which project to open.</li>
+                    <li><code>-buildTarget</code> — the platform to switch to before building (e.g. <code>StandaloneWindows64</code>, <code>StandaloneOSX</code>, <code>Android</code>, <code>WebGL</code>).</li>
+                    <li><code>-executeMethod</code> — a <code>public static</code> method Unity calls once the project is open; this is your entry point into custom build code.</li>
+                    <li><code>-logFile -</code> — stream the Editor log to stdout so the CI console shows what happened.</li>
+                </ul>
+                <p>To run the <strong>test suite</strong> headlessly instead of building, swap in <code>-runTests -testPlatform EditMode -testResults results.xml</code>. Unity exits with a non-zero code if any test fails — which is exactly what lets CI gate the build on green tests.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Batch mode exits with a status code — respect it</h4>
+                    <p>A headless Unity returns <strong>0</strong> on success and non-zero on failure. Your build method must call <code>EditorApplication.Exit(1)</code> on error so the runner sees the failure; if you swallow the exception and return normally, CI thinks the build "succeeded" and merrily ships a broken binary.</p>
+                </div>
+            </section>
+
+            <section id="buildscript" class="lesson-section">
+                <h2>A C# BuildScript</h2>
+                <p>The <code>-executeMethod</code> target is ordinary Editor C#. It lives in an <code>Editor</code> folder (or Editor-only assembly) and uses <code>BuildPipeline.BuildPlayer</code> to produce the player. Here is a complete, CI-ready script:</p>
+                <pre><code class="language-csharp">using UnityEditor;
+using UnityEditor.Build.Reporting;
+using UnityEngine;
+
+public static class BuildScript
+{
+    // The scenes to include, in order. Pulling from the Build Settings list
+    // keeps this in sync with what you test in the Editor.
+    private static string[] Scenes =&gt;
+        System.Array.FindAll(EditorBuildSettings.scenes, s =&gt; s.enabled)
+            .Length == 0
+            ? new[] { "Assets/Scenes/Main.unity" }
+            : System.Array.ConvertAll(
+                System.Array.FindAll(EditorBuildSettings.scenes, s =&gt; s.enabled),
+                s =&gt; s.path);
+
+    // Called by: -executeMethod BuildScript.PerformBuild
+    public static void PerformBuild()
+    {
+        // Allow CI to override the output path via an env var.
+        string outDir = System.Environment.GetEnvironmentVariable("BUILD_OUTPUT")
+                        ?? "Builds/Windows";
+        string exePath = $"{outDir}/MyGame.exe";
+
+        var options = new BuildPlayerOptions
+        {
+            scenes = Scenes,
+            locationPathName = exePath,
+            target = BuildTarget.StandaloneWindows64,
+            options = BuildOptions.None   // add BuildOptions.Development for dev builds
+        };
+
+        BuildReport report = BuildPipeline.BuildPlayer(options);
+        BuildSummary summary = report.summary;
+
+        if (summary.result == BuildResult.Succeeded)
+        {
+            Debug.Log($"Build OK: {summary.totalSize} bytes in {summary.totalTime}");
+            EditorApplication.Exit(0);
+        }
+        else
+        {
+            Debug.LogError($"Build FAILED with {summary.totalErrors} errors");
+            EditorApplication.Exit(1);   // non-zero → CI marks the job failed
+        }
+    }
+}</code></pre>
+                <p>The shape is always the same: assemble a <code>BuildPlayerOptions</code> (scenes, output path, target, options), call <code>BuildPipeline.BuildPlayer</code>, inspect the returned <code>BuildReport</code>, and translate its result into a process exit code. Reading the output path from an environment variable lets the same script serve every platform your CI matrix builds — the pipeline sets <code>BUILD_OUTPUT</code>, the script obeys.</p>
+                <blockquote>
+                    <strong>💡 The BuildReport is a goldmine.</strong> Beyond pass/fail, <code>report</code> exposes per-step timings and a breakdown of what went into the build. Logging <code>summary.totalSize</code> over time is a cheap way to catch the day someone accidentally ships 2&nbsp;GB of uncompressed textures.
+                </blockquote>
+            </section>
+
+            <section id="pipeline" class="lesson-section">
+                <h2>The Pipeline, End to End</h2>
+                <p>Before wiring specific tools, hold the whole flow in your head. A push triggers the runner, which checks out the commit, runs the tests from Lesson 8.1, and only if they're green invokes the build script above — then publishes the resulting player as a downloadable artifact and, optionally, deploys it.</p>
+                <div class="mermaid">
+flowchart LR
+    A["👩‍💻 git push<br/>commit"] --&gt; B["🖥️ CI runner<br/>checks out code"]
+    B --&gt; C["🔑 Activate<br/>Unity license"]
+    C --&gt; D["🧪 Run tests<br/>-runTests"]
+    D --&gt;|"❌ red"| X["🚫 Fail the job<br/>notify team"]
+    D --&gt;|"✅ green"| E["⚙️ Build player<br/>-executeMethod"]
+    E --&gt; F["📦 Upload artifact<br/>versioned zip"]
+    F --&gt; G["🚀 Deploy<br/>testers / store"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: A Unity CI/CD pipeline. A commit triggers a fresh runner that activates a license, runs the test suite, and <em>gates</em> the build on green tests. A passing build becomes a versioned artifact and can flow on to deployment. The red branch stops the line and alerts the team — the whole point of CI.</p>
+                <p>Every CI system — GitHub Actions, GitLab CI, Unity Build Automation — is a way of expressing this same graph. Learn the shape once and the specific YAML is just dialect.</p>
+            </section>
+
+            <section id="github" class="lesson-section">
+                <h2>GitHub Actions with game-ci</h2>
+                <p>The most common self-service option is <strong>GitHub Actions</strong> driving the open-source <a href="https://game.ci/" target="_blank" rel="noopener"><strong>GameCI</strong></a> actions, which package Unity into Docker images and handle the batch-mode plumbing for you. A workflow file lives at <code>.github/workflows/build.yml</code>. Here's a minimal test-then-build pipeline:</p>
+                <pre><code class="language-none">name: Build
+on: [push]
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true                 # Git LFS for large assets
+
+      - name: Run tests
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          testMode: editmode
+
+      - name: Build
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          targetPlatform: StandaloneWindows64
+          buildMethod: BuildScript.PerformBuild
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MyGame-Windows
+          path: build/</code></pre>
+                <p>Read it as the graph from Figure 1: check out (with LFS for big assets), run the Edit Mode tests, build calling <em>your</em> <code>BuildScript.PerformBuild</code>, then upload the output folder as a downloadable artifact. The <code>unity-builder</code> action supplies the Docker image with the right Unity version, invokes batch mode, and injects the license from a secret — so you never write the raw <code>-batchmode</code> command yourself, but everything under the hood is exactly the flags from earlier in this lesson.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Match the Unity version, or waste an hour</h4>
+                    <p>GameCI picks the Editor version from your project's <code>ProjectSettings/ProjectVersion.txt</code>. If the exact version image doesn't exist yet (a brand-new release) the job fails cryptically. Pin a known-good version and bump deliberately — a version mismatch between your machine and the runner is the number-one first-pipeline frustration.</p>
+                </div>
+            </section>
+
+            <section id="licensing" class="lesson-section">
+                <h2>Licensing &amp; Activation in CI</h2>
+                <p>Unity refuses to run headlessly without an activated license, and a CI runner is a throwaway machine with no logged-in user — so activation is the step that trips up every first pipeline. The mechanism depends on your license type:</p>
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🆓 Personal</h4>
+                        <p>Generate a manual activation file (<code>.alf</code>) once, exchange it on Unity's site for a <code>.ulf</code> license file, and store that file's contents in a CI <strong>secret</strong> (<code>UNITY_LICENSE</code>). GameCI activates from it at the start of each job.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>💼 Pro / Plus</h4>
+                        <p>Use serial-based activation: store <code>UNITY_SERIAL</code>, <code>UNITY_EMAIL</code>, and <code>UNITY_PASSWORD</code> as secrets. The runner activates against Unity's licensing server on start and <strong>returns the seat</strong> on finish so you don't exhaust your activations.</p>
+                    </div>
+                </div>
+                <p>Whichever path, the license lands in <strong>encrypted secrets</strong>, never in the repository. Treat a leaked <code>.ulf</code> or serial like a leaked password.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Never commit license files, serials, or credentials</h4>
+                    <p>A <code>.ulf</code> in git history or a serial echoed into a public log is a real leak. Use your CI provider's secret store, mask values in logs, and rotate anything that slips out. This is exactly why the workflow reads <code>${{ secrets.UNITY_LICENSE }}</code> rather than an inline string.</p>
+                </div>
+            </section>
+
+            <section id="cloud" class="lesson-section">
+                <h2>Unity Build Automation</h2>
+                <p>If you'd rather not manage runners, licenses, and Docker images yourself, <strong>Unity Build Automation</strong> (part of Unity Gaming Services, and the successor to what was called <em>Cloud Build</em>) is Unity's hosted build farm. You connect your Git repository through the Unity Dashboard, define build targets per platform, and Unity's servers build on every push — including notoriously fiddly platforms like iOS, where they manage the macOS + Xcode toolchain for you.</p>
+                <p>The trade-off is the usual build-vs-buy: a managed service means less setup and no infrastructure to babysit, but less control and a usage-based cost as your team and build frequency grow. Many studios start on Build Automation for convenience and move to self-hosted GitHub Actions once they need custom steps or want to control cost. Both drive the very same <code>BuildScript.PerformBuild</code> you wrote — the build <em>logic</em> is portable; only the orchestration changes.</p>
+                <blockquote>
+                    <strong>🔎 It's a spectrum, not a binary.</strong> GitHub-hosted runners, self-hosted runners, and Unity Build Automation trade convenience against control and cost in that order. Pick by what's scarce on your team: if it's time and ops skill, lean managed; if it's money and you need bespoke steps, lean self-hosted.
+                </blockquote>
+            </section>
+
+            <section id="versioning" class="lesson-section">
+                <h2>Artifacts &amp; Versioning</h2>
+                <p>A build the pipeline throws away is useless; the output must become a durable, identifiable <strong>artifact</strong>. Two habits make artifacts trustworthy:</p>
+                <p><strong>Stamp every build with a version.</strong> Set <code>PlayerSettings.bundleVersion</code> and the platform build number from the pipeline — a common scheme is a semantic version from a git tag plus the CI run number and short commit hash, e.g. <code>1.4.0+312.a1b9c4</code>. Now any binary a tester reports a bug in maps back to an exact commit.</p>
+                <pre><code class="language-csharp">// Called early in PerformBuild, before BuildPlayer.
+string version = System.Environment.GetEnvironmentVariable("BUILD_VERSION") ?? "0.0.0";
+string build   = System.Environment.GetEnvironmentVariable("GITHUB_RUN_NUMBER") ?? "0";
+PlayerSettings.bundleVersion = version;
+PlayerSettings.macOS.buildNumber = build;
+PlayerSettings.Android.bundleVersionCode = int.Parse(build);</code></pre>
+                <p><strong>Name and retain artifacts deliberately.</strong> Upload the player folder under a name that includes platform and version (<code>MyGame-Win64-1.4.0-312.zip</code>), and set a retention policy so you can always fetch the exact build a report references. Artifacts are also how CD hands off downstream — the same zip a tester downloads is the one a deploy step pushes to a store channel.</p>
+                <div class="card card-success">
+                    <h4>✅ The discipline in one line</h4>
+                    <p>Every push produces a <strong>tested</strong>, <strong>versioned</strong>, <strong>retained</strong> build traceable to an exact commit — so "which build?" and "does it pass?" are never open questions again.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: A two-target build script</h3>
+                    <p><strong>Objective:</strong> Extend <code>BuildScript</code> so one method can build either Windows or WebGL, chosen by an environment variable.</p>
+                    <p>Add a <code>PerformBuild</code> that reads <code>BUILD_TARGET</code> (<code>"Windows"</code> or <code>"WebGL"</code>), sets the matching <code>BuildTarget</code> and output path/extension, and otherwise reuses the pattern from the lesson. Remember the exit-code contract.</p>
+                    <details>
+                        <summary>✅ Solution sketch</summary>
+                        <pre><code class="language-csharp">public static void PerformBuild()
+{
+    string which = System.Environment.GetEnvironmentVariable("BUILD_TARGET") ?? "Windows";
+    var opts = new BuildPlayerOptions { scenes = Scenes };
+
+    if (which == "WebGL")
+    {
+        opts.target = BuildTarget.WebGL;
+        opts.locationPathName = "Builds/WebGL";       // a folder
+    }
+    else
+    {
+        opts.target = BuildTarget.StandaloneWindows64;
+        opts.locationPathName = "Builds/Windows/MyGame.exe";
+    }
+
+    var report = BuildPipeline.BuildPlayer(opts);
+    EditorApplication.Exit(report.summary.result == BuildResult.Succeeded ? 0 : 1);
+}</code></pre>
+                        <p>WebGL builds to a <em>folder</em> (there's no single executable), so the output path differs — a good reminder that <code>locationPathName</code> semantics vary by platform.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Gate the build on tests</h3>
+                    <p>In the GitHub Actions workflow, the test step runs before the build step. Explain why that ordering — plus batch mode's exit code — means a failing test prevents an artifact from ever being produced.</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>Steps in a job run sequentially, and a step that exits non-zero fails the job and stops the remaining steps by default. <code>unity-test-runner</code> runs Unity with <code>-runTests</code>, which exits non-zero if any test fails. So a red suite fails the test step, the build step never runs, and no artifact is uploaded. The tests <em>gate</em> the build — CI can only ship what passes.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What does the <code>-quit</code> flag do in a batch-mode Unity invocation?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Suppressing dialogs is -batchmode's job, not -quit's.">A) Suppresses interactive dialogs</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! -quit makes the Editor exit once the executed method returns; without it the process hangs open on the runner forever.">B) Exits the Editor once the executed method returns</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Skipping graphics init is -nographics; -quit is about exiting.">C) Skips graphics device initialisation</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Which API actually produces the player inside your build script?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That reports settings; it doesn't build.">A) <code>PlayerSettings.bundleVersion</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! BuildPipeline.BuildPlayer(BuildPlayerOptions) does the build and returns a BuildReport.">B) <code>BuildPipeline.BuildPlayer(options)</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="That's the entry point Unity calls; it in turn calls BuildPlayer.">C) <code>-executeMethod</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why must the build method call <code>EditorApplication.Exit(1)</code> on failure?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't clean temp files; it signals the process result.">A) To delete temporary build files</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A non-zero exit code tells the CI runner the job failed; without it CI thinks the build succeeded and ships a broken binary.">B) So the CI runner sees a non-zero exit code and marks the job failed</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Activation is a separate earlier step; the exit code is about reporting success/failure.">C) To release the Unity license</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Where should a Unity license file or serial live for a CI pipeline?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Committing credentials to the repo is a leak, even in a private repo's history.">A) Committed in the repository next to the workflow</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Credentials belong in the CI provider's encrypted secret store and are referenced as secrets, never inlined or committed.">B) In the CI provider's encrypted secrets, referenced as <code>${{ secrets.* }}</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Printing it to the log exposes it to anyone who can read build logs.">C) Echoed into the build log for reference</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong>CI/CD</strong> builds and tests every push on a server, giving reproducible, test-gated, parallel builds instead of forgettable manual ones.</li>
+                        <li>Unity runs headlessly in <strong>batch mode</strong>: <code>-batchmode -quit -nographics -projectPath -buildTarget -executeMethod</code>, with <code>-runTests</code> to run the suite and a status code that reports success.</li>
+                        <li>A C# <code>BuildScript</code> assembles <code>BuildPlayerOptions</code>, calls <code>BuildPipeline.BuildPlayer</code>, inspects the <code>BuildReport</code>, and translates the result into an exit code via <code>EditorApplication.Exit</code>.</li>
+                        <li><strong>GitHub Actions</strong> + <code>game-ci/unity-builder</code>/<code>unity-test-runner</code> expresses the checkout → test → build → artifact pipeline; the tools wrap batch mode for you.</li>
+                        <li><strong>Licensing</strong> in CI uses encrypted secrets (a <code>.ulf</code> for Personal, serial + credentials for Pro) — never committed.</li>
+                        <li><strong>Unity Build Automation</strong> is the managed alternative; both drive the same build script. Stamp every artifact with a <strong>version</strong> traceable to its commit.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Your game now builds and tests itself on every push. But shipping isn't the end — it's the start of the loop where you learn what players actually do. In <strong>Lesson 8.3: Live-Ops — Analytics, Remote Config &amp; Crash Reporting</strong> you'll see how to measure real player behaviour, change balancing and feature flags <em>without a new build</em>, and catch crashes in the wild — turning a shipped build into a game you keep improving.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>⚙️ The machine builds for you now</h3>
+                    <p>Every commit becomes a tested, versioned build without you lifting a finger. That's what frees a team to move fast without breaking things.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_35.html" class="prev-lesson">← Previous: The Unity Test Framework — Edit &amp; Play Mode Tests</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_37.html" class="next-lesson">Next: Live-Ops — Analytics, Remote Config &amp; Crash Reporting →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

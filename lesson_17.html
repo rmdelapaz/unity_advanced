@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Install the Entities package and build ECS data by hand: define IComponentData structs and tag components, create entities and archetypes in code with the EntityManager, and understand chunks, structural changes, and enableable components.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 4.2: Components &amp; Archetypes — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 4: DOTS / ECS</a></li>
+            <li aria-current="page">Lesson 4.2: Components &amp; Archetypes</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>📦 Lesson 4.2: Components &amp; Archetypes</h1>
+                <p class="lead">Lesson 4.1 gave you the mental model; now we make it real. You'll install the Entities package, define your own <code>IComponentData</code> structs, and create entities in code with the <code>EntityManager</code> — then watch the archetype/chunk system organise them in memory exactly as the diagrams promised. This is the concrete foundation for the systems and baking that follow.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Install and enable the <strong>Entities</strong> package family</li>
+                        <li>Define data components (<code>IComponentData</code>) and zero-size <strong>tag</strong> components</li>
+                        <li>Create entities and add components with the <strong><code>EntityManager</code></strong></li>
+                        <li>Create <strong>archetypes</strong> explicitly and batch-instantiate entities</li>
+                        <li>Explain how <strong>chunks</strong> store entities and why <strong>structural changes</strong> cost</li>
+                        <li>Use <strong>enableable components</strong> to toggle state without structural churn</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 4.1 (The ECS Mindset)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#install" class="toc-link">Installing Entities</a></li>
+                        <li><a href="#components" class="toc-link">Defining Components</a></li>
+                        <li><a href="#tags" class="toc-link">Tag Components</a></li>
+                        <li><a href="#create" class="toc-link">Creating Entities in Code</a></li>
+                        <li><a href="#archetypes" class="toc-link">Archetypes Explicitly</a></li>
+                        <li><a href="#chunks" class="toc-link">Inside a Chunk</a></li>
+                        <li><a href="#structural" class="toc-link">Structural Changes &amp; Enableable Components</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="install" class="lesson-section">
+                <h2>Installing Entities</h2>
+                <p>ECS lives in the <strong>Entities</strong> package. Open <strong>Window ▸ Package Manager</strong>, and install <strong>Entities</strong> (it pulls in Burst, Collections, and Mathematics from Module 3 as dependencies). To <em>render</em> entities you also want <strong>Entities Graphics</strong>, which adds the hybrid renderer that draws entities through URP. Installing Entities Graphics is the simplest route — it brings Entities along with it.</p>
+                <p>After install you'll see new editor windows under <strong>Window ▸ Entities</strong> (Hierarchy, Systems, Components) and DOTS options in the project settings. Those windows are UI Toolkit panels — throughout this module we describe and diagram them rather than screenshot them, exactly as with the other node-editor windows in the course.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Entities is a big commitment</h4>
+                    <p>The Entities package changes how part of your project is built (source generators, baking, its own assemblies). Add it to a project that intends to use ECS — not on a whim to a shipping GameObject game. That's why <a href="lesson_16.html">Lesson 4.1</a> stressed choosing ECS for the parts that need scale, and keeping GameObjects for the rest.</p>
+                </div>
+            </section>
+
+            <section id="components" class="lesson-section">
+                <h2>Defining Components</h2>
+                <p>A component is a <code>struct</code> implementing <code>IComponentData</code>, holding only blittable data. Here are a couple we'll use — note the <code>Unity.Mathematics</code> types from Module 3:</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+using Unity.Mathematics;
+
+// Pure data. No methods, no MonoBehaviour, no references.
+public struct Velocity : IComponentData
+{
+    public float3 Value;
+}
+
+public struct Health : IComponentData
+{
+    public int Current;
+    public int Max;
+}</code></pre>
+                <p>These join the built-in components you already met: <code>Unity.Transforms.LocalTransform</code> (position/rotation/scale) and the rendering components that <code>Entities Graphics</code> attaches. Every field must be blittable — no <code>string</code> (use <code>FixedString</code>), no class references, no managed arrays. If you need a variable-length list per entity, there's a special <code>DynamicBuffer</code> element type, but plain <code>IComponentData</code> covers most data.</p>
+            </section>
+
+            <section id="tags" class="lesson-section">
+                <h2>Tag Components</h2>
+                <p>A component with <em>no fields</em> is a <strong>tag</strong> — it carries no data, it just marks an entity as being of some kind. Tags are free (zero bytes) and enormously useful, because systems query by component <em>presence</em>:</p>
+                <pre><code class="language-csharp">public struct Enemy : IComponentData { }       // a tag — marks "this is an enemy"
+public struct Wandering : IComponentData { }    // a tag — marks a behaviour state</code></pre>
+                <p>A system that should run only over enemies queries for the <code>Enemy</code> tag; a wandering-behaviour system queries for <code>Wandering</code>. You add and remove tags to change what an entity <em>is</em> and therefore which systems touch it — the ECS equivalent of flipping a boolean, but expressed in the type system where queries can see it.</p>
+            </section>
+
+            <section id="create" class="lesson-section">
+                <h2>Creating Entities in Code</h2>
+                <p>Entities live in a <strong>World</strong>, and the <strong><code>EntityManager</code></strong> is the API for creating and editing them. In play mode the default world already exists:</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+using Unity.Mathematics;
+using Unity.Transforms;
+
+EntityManager em = World.DefaultGameObjectInjectionWorld.EntityManager;
+
+// Create one empty entity, then add components (each Add is a structural change).
+Entity e = em.CreateEntity();
+em.AddComponentData(e, LocalTransform.FromPosition(new float3(0, 1, 0)));
+em.AddComponentData(e, new Velocity { Value = new float3(1, 0, 0) });
+em.AddComponentData(e, new Health  { Current = 100, Max = 100 });
+em.AddComponent&lt;Enemy&gt;(e);   // add a tag (no data)
+
+// Read and write component data:
+Velocity v = em.GetComponentData&lt;Velocity&gt;(e);
+em.SetComponentData(e, new Velocity { Value = v.Value * 2f });</code></pre>
+                <p>That's the imperative way to build entities — handy for spawners and tests. In production you'll usually author entities with GameObjects and <strong>bake</strong> them (Lesson 4.4), but doing it by hand here makes the data model concrete: an entity is an ID, and you attach typed data to it.</p>
+                <blockquote>
+                    <strong>💡 Where does the code run?</strong> You can call the <code>EntityManager</code> from a <code>MonoBehaviour</code> (to bootstrap a scene) or, more idiomatically, from inside a <em>system</em> — which is Lesson 4.3. Either way it's the same manager editing the same world.
+                </blockquote>
+            </section>
+
+            <section id="archetypes" class="lesson-section">
+                <h2>Archetypes Explicitly</h2>
+                <p>Adding components one by one works, but each add is a <em>structural change</em> that moves the entity between archetypes. When you're creating many identical entities, it's far better to declare the <strong>archetype</strong> up front and create them all at once:</p>
+                <pre><code class="language-csharp">// Declare the exact component set once.
+EntityArchetype archetype = em.CreateArchetype(
+    typeof(LocalTransform),
+    typeof(Velocity),
+    typeof(Enemy)
+);
+
+// Batch-create 10,000 entities of that archetype in one call — no per-entity churn.
+NativeArray&lt;Entity&gt; enemies = em.CreateEntity(archetype, 10000, Allocator.Temp);
+
+for (int i = 0; i &lt; enemies.Length; i++)
+{
+    em.SetComponentData(enemies[i], LocalTransform.FromPosition(RandomPos(i)));
+    em.SetComponentData(enemies[i], new Velocity { Value = RandomDir(i) });
+}
+enemies.Dispose();   // the array of handles; the entities live on in the world</code></pre>
+                <p>All 10,000 entities share one archetype, so they pack into the same chunks and any system that queries <code>{ LocalTransform, Velocity, Enemy }</code> streams straight through them. This is precisely how the 25,600-entity render in Lesson 4.1 was built — one archetype, one batch instantiate, then set each entity's data.</p>
+            </section>
+
+            <section id="chunks" class="lesson-section">
+                <h2>Inside a Chunk</h2>
+                <p>Recall from Lesson 4.1 that entities of one archetype are stored together in <strong>16&nbsp;KB chunks</strong>, each component type as its own packed array. How many entities fit in a chunk depends on the archetype's total size per entity — a lean archetype packs more per chunk (better cache use); a fat one packs fewer.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 360" role="img" aria-labelledby="chunkTitle chunkDesc">
+                        <title id="chunkTitle">Two archetypes, each stored in its own chunks</title>
+                        <desc id="chunkDesc">Archetype A with LocalTransform and Velocity packs many entities per 16 KB chunk across two chunks. Archetype B, which adds Health, is a different archetype stored in its own separate chunk. Each chunk shows columns for each component type as packed arrays.</desc>
+                        <rect x="0" y="0" width="900" height="360" rx="8" fill="#22262d"/>
+
+                        <text x="20" y="30" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#9be6b0">Archetype A = { LocalTransform, Velocity }</text>
+                        <!-- chunk A1 -->
+                        <rect x="20" y="44" width="380" height="120" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="30" y="62" font-family="'Consolas',monospace" font-size="10.5" fill="#8f9aa8">chunk #1 · 16 KB · full</text>
+                        <rect x="30" y="70" width="180" height="86" rx="4" fill="#26382a"/>
+                        <text x="120" y="86" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#9be6b0">LocalTransform[]</text>
+                        <rect x="216" y="70" width="174" height="86" rx="4" fill="#26382a"/>
+                        <text x="303" y="86" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#9be6b0">Velocity[]</text>
+                        <g font-family="'Consolas',monospace" font-size="9" fill="#cfe0d6" text-anchor="middle">
+                            <text x="120" y="108">packed rows →</text><text x="303" y="108">packed rows →</text>
+                            <text x="120" y="130">e0 e1 e2 … eN</text><text x="303" y="130">e0 e1 e2 … eN</text>
+                        </g>
+                        <!-- chunk A2 -->
+                        <rect x="20" y="176" width="380" height="120" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="30" y="194" font-family="'Consolas',monospace" font-size="10.5" fill="#8f9aa8">chunk #2 · 16 KB · partly full</text>
+                        <rect x="30" y="202" width="180" height="86" rx="4" fill="#26382a"/>
+                        <text x="120" y="218" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#9be6b0">LocalTransform[]</text>
+                        <rect x="216" y="202" width="174" height="86" rx="4" fill="#26382a"/>
+                        <text x="303" y="218" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#9be6b0">Velocity[]</text>
+                        <text x="205" y="252" text-anchor="middle" font-family="'Consolas',monospace" font-size="9" fill="#cfe0d6">eN+1 … (room for more)</text>
+
+                        <text x="470" y="30" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#8fd0ff">Archetype B = { LocalTransform, Velocity, Health }</text>
+                        <rect x="470" y="44" width="410" height="120" rx="6" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="480" y="62" font-family="'Consolas',monospace" font-size="10.5" fill="#8f9aa8">chunk #1 · 16 KB · a DIFFERENT archetype</text>
+                        <rect x="480" y="70" width="126" height="86" rx="4" fill="#243244"/>
+                        <text x="543" y="86" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fd0ff">LocalTransform[]</text>
+                        <rect x="612" y="70" width="120" height="86" rx="4" fill="#243244"/>
+                        <text x="672" y="86" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fd0ff">Velocity[]</text>
+                        <rect x="738" y="70" width="132" height="86" rx="4" fill="#243244"/>
+                        <text x="804" y="86" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fd0ff">Health[]</text>
+                        <text x="675" y="130" text-anchor="middle" font-family="'Consolas',monospace" font-size="9" fill="#cfe0e8">adding one component → a new archetype → new chunks</text>
+
+                        <text x="470" y="210" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d4e6">A system querying { LocalTransform, Velocity }</text>
+                        <text x="470" y="230" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d4e6">matches BOTH archetypes (both contain those two)</text>
+                        <text x="470" y="250" font-family="'Segoe UI',sans-serif" font-size="12" fill="#9be6b0">→ it streams A's chunks and B's chunks in turn.</text>
+                        <text x="470" y="282" font-family="'Segoe UI',sans-serif" font-size="12" fill="#ffd79a">A query needing Health matches ONLY archetype B.</text>
+                    </svg>
+                    <figcaption>Figure 1: Each archetype owns its chunks. A query matches every archetype that <em>contains</em> its required components, and walks all their chunks. Adding a component spawns a new archetype with its own chunks.</figcaption>
+                </figure>
+            </section>
+
+            <section id="structural" class="lesson-section">
+                <h2>Structural Changes &amp; Enableable Components</h2>
+                <p>Adding a component, removing one, creating or destroying an entity — these are <strong>structural changes</strong>. Because they move an entity between chunks (or allocate/free chunk space), they're heavier than editing a value, and they can't happen safely from inside a running job. That's why bulk creation uses archetypes, and why systems batch structural changes through an <code>EntityCommandBuffer</code> (Lesson 4.3).</p>
+                <p>But sometimes you want to toggle state constantly — stun an enemy this frame, un-stun it next — and adding/removing a tag every time would thrash the chunks. The fix is an <strong>enableable component</strong>: a component you can switch on and off <em>without</em> a structural change.</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+
+// IEnableableComponent lets you toggle presence cheaply — no chunk move.
+public struct Stunned : IComponentData, IEnableableComponent { }
+
+// Toggle it like a flag; queries can filter on enabled/disabled state.
+em.SetComponentEnabled&lt;Stunned&gt;(entity, true);   // stun
+em.SetComponentEnabled&lt;Stunned&gt;(entity, false);  // recover</code></pre>
+                <p>The entity keeps the component in its archetype the whole time; only a bit flips. Queries can be told to consider only entities where <code>Stunned</code> is enabled. Reach for enableable components whenever a flag changes often — it keeps the memory layout stable and avoids structural-change cost on the hot path.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Rule of thumb</h4>
+                    <p>Use a plain <strong>tag</strong> when the category rarely changes (an entity <em>is</em> an Enemy for its whole life). Use an <strong>enableable component</strong> when a flag flips frequently (Stunned, Targeted, Highlighted). Both are queryable; only one is cheap to toggle every frame.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Spawn a grid of entities in code</h3>
+                    <p><strong>Objective:</strong> Create entities by hand and confirm they exist.</p>
+                    <ol>
+                        <li>Define <code>Velocity : IComponentData</code> with a <code>float3 Value</code>, and a <code>Mover : IComponentData</code> tag.</li>
+                        <li>In a MonoBehaviour's <code>Start</code>, get the default world's <code>EntityManager</code> and <code>CreateArchetype(typeof(LocalTransform), typeof(Velocity), typeof(Mover))</code>.</li>
+                        <li>Batch-create 1,000 entities of that archetype; set each one's <code>LocalTransform</code> to a random position and give it a random <code>Velocity</code>.</li>
+                        <li>Open <strong>Window ▸ Entities ▸ Hierarchy</strong> in play mode and confirm 1,000 entities exist with those components.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Use <code>em.CreateEntity(archetype, 1000, Allocator.Temp)</code> to get a <code>NativeArray&lt;Entity&gt;</code>, loop with <code>SetComponentData</code>, then <code>Dispose()</code> the array (not the entities). Rendering them is Lesson 4.5 — for now the Entities Hierarchy is your proof they were created.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Tag vs enableable</h3>
+                    <p>For each, choose a plain tag or an enableable component: (a) an entity is a <code>Projectile</code> for its whole short life; (b) a unit is <code>Selected</code>, toggled many times a second as the player boxes-selects; (c) an entity is on the <code>PlayerTeam</code>.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) plain <strong>tag</strong> — set once at spawn. (b) <strong>enableable</strong> — flips constantly, avoid structural churn. (c) plain <strong>tag</strong> — team rarely changes. Only (b) benefits from <code>IEnableableComponent</code>.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What is a tag component?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A tag is a zero-field IComponentData that marks an entity so systems can query by its presence.">A) A zero-field <code>IComponentData</code> that marks an entity for queries</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Tags carry no data — that's the point.">B) A component holding a string label</button>
+                            <button class="quiz-option" data-correct="false" data-hint="That's a system, not a component.">C) A method that runs over entities</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why prefer <code>CreateArchetype</code> + batch create over adding components one at a time to 10,000 entities?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Both end at the same archetype; the cost is the path there.">A) The end result is different</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Each Add is a structural change that moves the entity; declaring the archetype up front creates them in place with no per-entity churn.">B) Each Add is a structural change; declaring the archetype avoids per-entity chunk moves</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Adding components is allowed; it's just slower done repeatedly.">C) You can't add components individually in ECS</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> A <code>Stunned</code> flag flips on and off many times per second. Best choice?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Add/remove each time is a structural change — exactly what to avoid here.">A) A plain tag, added and removed each time</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! An IEnableableComponent toggles without a structural change, keeping the chunk layout stable.">B) An enableable component toggled with <code>SetComponentEnabled</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="A managed bool field isn't how ECS queries state, and isn't blittable if it's a reference.">C) A managed <code>bool</code> stored elsewhere</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>The <strong>Entities</strong> package (with <strong>Entities Graphics</strong> to render) brings ECS, pulling in Burst/Collections/Mathematics.</li>
+                        <li>Components are blittable <code>IComponentData</code> structs; a zero-field one is a <strong>tag</strong> that systems query by presence.</li>
+                        <li>The <strong><code>EntityManager</code></strong> creates entities and adds/gets/sets components; batch-create with an <strong>archetype</strong> for scale.</li>
+                        <li>An <strong>archetype</strong> owns its <strong>chunks</strong>; a query matches every archetype containing its components and streams their chunks.</li>
+                        <li><strong>Structural changes</strong> (add/remove/create/destroy) move entities and cost more than editing values.</li>
+                        <li><strong>Enableable components</strong> toggle a flag without a structural change — ideal for frequently-flipped state.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You can build ECS data; now you need behaviour. In <strong>Lesson 4.3: Systems &amp; Queries — ISystem &amp; SystemAPI</strong> we write systems that query these components every frame, edit them in bulk, and (with <code>IJobEntity</code>) run that work as Burst-compiled parallel jobs.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>📦 Data, in place</h3>
+                    <p>Components are your columns, archetypes are your table schemas, chunks are the pages. You now lay that data out deliberately — the systems in the next lesson simply run over it.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_16.html" class="prev-lesson">← Previous: The ECS Mindset</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_18.html" class="next-lesson">Next: Systems &amp; Queries — ISystem &amp; SystemAPI →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

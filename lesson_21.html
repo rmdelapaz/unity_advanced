@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="How URP draws a frame: the Scriptable Render Pipeline, the sequence of render passes (shadows, opaque, skybox, transparent, post-processing), RenderPassEvent injection points, and reading it all in the Frame Debugger.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 5.1: The URP Frame &amp; the Frame Debugger — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 5: Advanced Rendering</a></li>
+            <li aria-current="page">Lesson 5.1: The URP Frame &amp; the Frame Debugger</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🖼️ Lesson 5.1: The URP Frame &amp; the Frame Debugger</h1>
+                <p class="lead">In Intermediate you authored materials with Shader Graph and never had to think about <em>how</em> a frame is drawn. This module goes below that line — HLSL, custom passes, compute. But before you change the rendering, you have to see it. This lesson maps the anatomy of a single URP frame and hands you the tool that lets you step through it draw by draw: the Frame Debugger.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain what the <strong>Scriptable Render Pipeline</strong> is and how URP renders per camera</li>
+                        <li>Name the major <strong>render passes</strong> of a URP frame and their order</li>
+                        <li>Identify the <strong><code>RenderPassEvent</code></strong> injection points where custom work can hook in</li>
+                        <li>Use the <strong>Frame Debugger</strong> to step through every draw call in a frame</li>
+                        <li>Read a frame to diagnose overdraw, batching, and pass ordering</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Intermediate Shader Graph &amp; URP lighting; Module 2 Lesson 2.4 (batching)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#srp" class="toc-link">The Scriptable Render Pipeline</a></li>
+                        <li><a href="#passes" class="toc-link">The Passes of a URP Frame</a></li>
+                        <li><a href="#events" class="toc-link">RenderPassEvent Injection Points</a></li>
+                        <li><a href="#framedebugger" class="toc-link">The Frame Debugger</a></li>
+                        <li><a href="#reading" class="toc-link">Reading a Frame</a></li>
+                        <li><a href="#ahead" class="toc-link">What's Ahead</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="srp" class="lesson-section">
+                <h2>The Scriptable Render Pipeline</h2>
+                <p>Unity's rendering is a <strong>Scriptable Render Pipeline (SRP)</strong> — the whole "how to draw a frame" process is written in C# rather than baked into the engine. The <strong>Universal Render Pipeline (URP)</strong> is one such pipeline, tuned for a wide range of platforms; HDRP is another, tuned for high fidelity. Because it's code, you can read it, hook into it, and extend it — which is exactly what this module does.</p>
+                <p>Each frame, for each active <strong>camera</strong>, URP does a <strong>culling</strong> pass (which objects and lights are visible?) and then executes an ordered list of <strong>render passes</strong> that fill in the final image. Understanding that ordered list is the key that unlocks everything else — a custom shader runs <em>inside</em> one of those passes, and a custom Renderer Feature <em>adds</em> one.</p>
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>A <strong>render pass</strong> is one self-contained step that reads and writes render textures — "draw all opaque objects," "draw the skybox," "apply post-processing." A <strong>frame</strong> is the ordered sequence of passes that turns a culled scene into the pixels on screen.</p>
+                </div>
+            </section>
+
+            <section id="passes" class="lesson-section">
+                <h2>The Passes of a URP Frame</h2>
+                <p>A typical URP frame runs these passes in order. The exact set depends on your renderer settings (a depth prepass, SSAO, decals, etc. may be added), but the backbone is consistent:</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 250" role="img" aria-labelledby="frameTitle frameDesc">
+                        <title id="frameTitle">The ordered render passes of a URP frame</title>
+                        <desc id="frameDesc">Left to right: render shadow maps, then depth/normals prepass (optional), then draw opaque geometry, then the skybox, then transparent geometry back-to-front, then post-processing, then final blit to the screen. Arrows show the order.</desc>
+                        <rect x="0" y="0" width="900" height="250" rx="8" fill="#22262d"/>
+                        <text x="450" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#dfe8ff">One URP frame, per camera</text>
+                        <defs><marker id="pa" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8fd0ff"/></marker></defs>
+                        <g font-family="'Segoe UI',sans-serif" font-size="11" text-anchor="middle">
+                            <rect x="20" y="70" width="110" height="60" rx="6" fill="#3a3a52" stroke="#565676"/>
+                            <text x="75" y="96" fill="#e6e6f2">Shadow</text><text x="75" y="112" fill="#e6e6f2">maps</text>
+                            <rect x="146" y="70" width="110" height="60" rx="6" fill="#33404a" stroke="#4c5f6e"/>
+                            <text x="201" y="92" fill="#cfe0ec">Depth /</text><text x="201" y="108" fill="#cfe0ec">Normals</text><text x="201" y="123" font-size="9" fill="#8f9aa8">(optional)</text>
+                            <rect x="272" y="70" width="110" height="60" rx="6" fill="#2c3b30" stroke="#4e6b52"/>
+                            <text x="327" y="96" fill="#d6ecda">Opaque</text><text x="327" y="112" fill="#d6ecda">geometry</text>
+                            <rect x="398" y="70" width="110" height="60" rx="6" fill="#31465e" stroke="#4c6a8c"/>
+                            <text x="453" y="104" fill="#dbe9f5">Skybox</text>
+                            <rect x="524" y="70" width="110" height="60" rx="6" fill="#4a3550" stroke="#6d4f78"/>
+                            <text x="579" y="96" fill="#f0dcf5">Transparent</text><text x="579" y="112" font-size="9" fill="#c9a9d1">back-to-front</text>
+                            <rect x="650" y="70" width="110" height="60" rx="6" fill="#5a4a2a" stroke="#836b3c"/>
+                            <text x="705" y="96" fill="#f5e6c8">Post-</text><text x="705" y="112" fill="#f5e6c8">processing</text>
+                            <rect x="776" y="70" width="104" height="60" rx="6" fill="#14304a" stroke="#3a6a95"/>
+                            <text x="828" y="96" fill="#bcd4ee">Final</text><text x="828" y="112" fill="#bcd4ee">blit</text>
+                        </g>
+                        <g stroke="#8fd0ff" stroke-width="2" marker-end="url(#pa)">
+                            <line x1="130" y1="100" x2="144" y2="100"/><line x1="256" y1="100" x2="270" y2="100"/><line x1="382" y1="100" x2="396" y2="100"/><line x1="508" y1="100" x2="522" y2="100"/><line x1="634" y1="100" x2="648" y2="100"/><line x1="760" y1="100" x2="774" y2="100"/>
+                        </g>
+                        <text x="327" y="168" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9be6b0">front-to-back (early-Z saves fill)</text>
+                        <text x="579" y="168" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#d9b6e2">sorted for correct blending</text>
+                        <text x="450" y="210" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">Custom passes inject between these stages via RenderPassEvent (next section).</text>
+                    </svg>
+                    <figcaption>Figure 1: The backbone of a URP frame. Opaques draw front-to-back (so hidden pixels are cheaply rejected); transparents draw back-to-front (so blending is correct); post-processing runs last on the finished colour.</figcaption>
+                </figure>
+
+                <p>Two ordering facts matter constantly. <strong>Opaque</strong> geometry is drawn roughly front-to-back so the depth test rejects hidden pixels before they're shaded (cheap). <strong>Transparent</strong> geometry must be drawn back-to-front and can't rely on the depth buffer the same way, which is why transparency is more expensive and why overdraw hurts most there.</p>
+            </section>
+
+            <section id="events" class="lesson-section">
+                <h2>RenderPassEvent Injection Points</h2>
+                <p>The gaps between those passes are named, and a custom pass declares <em>where</em> it runs by setting a <strong><code>RenderPassEvent</code></strong>. You'll use these constantly in Lesson 5.3:</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>RenderPassEvent</th><th>Runs…</th><th>Good for</th></tr></thead>
+                        <tbody>
+                            <tr><td><code>BeforeRenderingOpaques</code></td><td>before opaque geometry</td><td>clearing/preparing custom buffers</td></tr>
+                            <tr><td><code>AfterRenderingOpaques</code></td><td>after opaques, before skybox</td><td>effects on solid geometry (outlines)</td></tr>
+                            <tr><td><code>BeforeRenderingTransparents</code></td><td>before transparent geometry</td><td>refraction grabs, distortion setup</td></tr>
+                            <tr><td><code>BeforeRenderingPostProcessing</code></td><td>after transparents, before post</td><td>full-screen effects (blur, grade)</td></tr>
+                            <tr><td><code>AfterRenderingPostProcessing</code></td><td>after post, near the end</td><td>UI-space or final overlays</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p>Picking the right event is half of writing a Renderer Feature correctly — inject a full-screen colour effect at <code>BeforeRenderingPostProcessing</code>, not before the objects it's supposed to affect have even been drawn.</p>
+            </section>
+
+            <section id="framedebugger" class="lesson-section">
+                <h2>The Frame Debugger</h2>
+                <p>The <strong>Frame Debugger</strong> (<code>Window ▸ Analysis ▸ Frame Debugger</code>) freezes a frame and lets you step through <em>every</em> draw event in order, showing the screen build up one call at a time. It's the single best tool for understanding — and diagnosing — what your renderer is actually doing.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 380" role="img" aria-labelledby="fdTitle fdDesc">
+                        <title id="fdTitle">The Frame Debugger window</title>
+                        <desc id="fdDesc">A recreation of Unity's Frame Debugger. On the left, an event tree lists the render passes and their draw calls: RenderShadows, DrawOpaqueObjects with several SRP Batch entries, DrawSkybox, DrawTransparentObjects, and a Post-processing Uber pass. A highlighted DrawOpaqueObjects event is selected. On the right, a details panel shows the selected draw's shader, pass, and output target, plus a note that 428 of 500 draws were batched.</desc>
+                        <rect x="0" y="0" width="900" height="380" rx="6" fill="#3b3b3b" stroke="#1c1c1c"/>
+                        <rect x="0" y="0" width="900" height="28" rx="6" fill="#2d2d2d"/>
+                        <rect x="0" y="14" width="900" height="14" fill="#2d2d2d"/>
+                        <text x="16" y="19" font-family="'Segoe UI',sans-serif" font-size="12" fill="#e8e8e8">Frame Debugger</text>
+                        <rect x="120" y="6" width="80" height="17" rx="3" fill="#454545"/>
+                        <text x="160" y="18" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#dcdcdc">Enable</text>
+                        <text x="700" y="19" font-family="'Consolas',monospace" font-size="10.5" fill="#9fd0a0">event 214 / 512</text>
+
+                        <!-- event tree -->
+                        <rect x="8" y="36" width="360" height="336" rx="4" fill="#333333" stroke="#1c1c1c"/>
+                        <g font-family="'Segoe UI',sans-serif" font-size="12">
+                            <text x="20" y="60" fill="#bfc9d6">▾ RenderShadows</text>
+                            <text x="34" y="80" font-size="11" fill="#8f8f8f">Shadows.Draw ×3</text>
+                            <text x="20" y="104" fill="#bfc9d6">▾ DrawOpaqueObjects</text>
+                            <rect x="14" y="112" width="348" height="20" fill="#2f5aa0"/>
+                            <text x="34" y="127" font-size="11" fill="#ffffff">RenderLoop.Draw — SRP Batch (128)</text>
+                            <text x="34" y="147" font-size="11" fill="#c9c9c9">SRP Batch (96)</text>
+                            <text x="34" y="167" font-size="11" fill="#c9c9c9">SRP Batch (204)</text>
+                            <text x="20" y="191" fill="#bfc9d6">▸ DrawSkybox</text>
+                            <text x="20" y="215" fill="#bfc9d6">▾ DrawTransparentObjects</text>
+                            <text x="34" y="235" font-size="11" fill="#c9c9c9">Draw — particles</text>
+                            <text x="34" y="255" font-size="11" fill="#c9c9c9">Draw — glass</text>
+                            <text x="20" y="279" fill="#bfc9d6">▾ Render Post-processing</text>
+                            <text x="34" y="299" font-size="11" fill="#c9c9c9">UberPost (bloom + tonemap)</text>
+                            <text x="20" y="323" fill="#bfc9d6">▸ FinalBlit</text>
+                            <text x="20" y="352" font-size="10.5" fill="#7f8b99">← → arrows step through events</text>
+                        </g>
+
+                        <!-- details -->
+                        <rect x="376" y="36" width="516" height="336" rx="4" fill="#2f2f2f" stroke="#1c1c1c"/>
+                        <text x="392" y="60" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#dfe8ff">Selected: DrawOpaqueObjects — SRP Batch</text>
+                        <g font-family="'Consolas',monospace" font-size="11" fill="#cfd6df">
+                            <text x="392" y="90">Shader:  Universal Render Pipeline/Lit</text>
+                            <text x="392" y="112">Pass:    ForwardLit</text>
+                            <text x="392" y="134">Output:  _CameraColorAttachmentA</text>
+                            <text x="392" y="156">Blend:   One Zero  ·  ZTest LEqual  ·  ZWrite On</text>
+                            <text x="392" y="178">Draw calls in batch:  128</text>
+                        </g>
+                        <rect x="392" y="196" width="484" height="70" rx="5" fill="#26382a" stroke="#3f5a44"/>
+                        <text x="404" y="220" font-family="'Segoe UI',sans-serif" font-size="11.5" fill="#9be6b0">✓ 428 of 500 opaque draws were SRP-batched</text>
+                        <text x="404" y="242" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#bcd0c0">72 broke batch — different shader variants / material keywords.</text>
+                        <text x="404" y="258" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#bcd0c0">Fixing those is a Module 2.4 batching win.</text>
+                        <rect x="392" y="278" width="484" height="80" rx="5" fill="#232323" stroke="#151515"/>
+                        <text x="404" y="300" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">Preview of the frame up to this event:</text>
+                        <rect x="404" y="308" width="120" height="44" rx="3" fill="#14304a"/>
+                        <text x="540" y="326" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">the screen builds up one draw at a time</text>
+                        <text x="540" y="344" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">as you step through the event list.</text>
+                    </svg>
+                    <figcaption>Figure 2: The Frame Debugger (faithfully recreated). The event tree on the left is your frame's pass list; selecting a draw shows its shader, pass, render target, and how many draws batched together.</figcaption>
+                </figure>
+            </section>
+
+            <section id="reading" class="lesson-section">
+                <h2>Reading a Frame</h2>
+                <p>Step through a frame and you can answer questions that are otherwise guesswork:</p>
+                <ul>
+                    <li><strong>Is my batching working?</strong> If 500 opaque objects show up as 500 separate draws instead of a few SRP Batches, something is breaking the batch (a material keyword, an incompatible shader) — the diagnosis you set up in <a href="lesson_09.html">Lesson 2.4</a>.</li>
+                    <li><strong>What's the draw order?</strong> Watch the screen fill in; if a custom effect appears before the objects it should modify, your <code>RenderPassEvent</code> is wrong.</li>
+                    <li><strong>Where's my overdraw?</strong> Transparent objects stacking up (particles, foliage) each add a full-screen-ish draw — the Frame Debugger makes the pile visible.</li>
+                    <li><strong>Which render target?</strong> Each event names the texture it writes (<code>_CameraColorAttachmentA</code>, a shadow map, a temp RT) — essential when you start creating your own targets in Lesson 5.3.</li>
+                </ul>
+                <blockquote>
+                    <strong>💡 Habit worth forming.</strong> Whenever a rendering result looks wrong, open the Frame Debugger <em>first</em>. Nine times in ten the ordered event list shows you exactly which pass misbehaved, before you touch a line of shader code.
+                </blockquote>
+            </section>
+
+            <section id="ahead" class="lesson-section">
+                <h2>What's Ahead</h2>
+                <p>You now have the map. The rest of Module 5 fills it in:</p>
+                <ul>
+                    <li><strong>Lesson 5.2</strong> — write the code that runs <em>inside</em> the opaque/transparent passes: HLSL shaders.</li>
+                    <li><strong>Lesson 5.3</strong> — <em>add</em> your own passes at those <code>RenderPassEvent</code> injection points: Scriptable Renderer Features.</li>
+                    <li><strong>Lesson 5.4</strong> — do general-purpose GPU work outside the draw passes entirely: compute shaders.</li>
+                    <li><strong>Lesson 5.5</strong> — combine features and shaders into a custom full-screen post-process effect.</li>
+                </ul>
+                <p>Every one of them lives somewhere on Figure 1. Keep that diagram in mind and the module stays concrete.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Dissect a real frame</h3>
+                    <p><strong>Objective:</strong> Get fluent with the Frame Debugger.</p>
+                    <ol>
+                        <li>Open a scene with a handful of lit objects, some transparent particles, and post-processing (bloom).</li>
+                        <li>Open <strong>Window ▸ Analysis ▸ Frame Debugger</strong> and press <strong>Enable</strong>.</li>
+                        <li>Step from the first event to the last with the arrow keys. Note where shadows are drawn, where opaques finish and the skybox appears, and where post-processing kicks in.</li>
+                        <li>Find one opaque draw and read its shader/pass/output; find how many objects batched together.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 What to look for</summary>
+                        <p>The event tree mirrors Figure 1: RenderShadows → DrawOpaqueObjects → DrawSkybox → DrawTransparentObjects → post → FinalBlit. If your opaques are one or two SRP Batches, batching is healthy; if they're dozens of individual draws, note which material/shader is breaking it.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why are opaque objects drawn front-to-back?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Drawing nearest-first lets the depth test reject hidden pixels before they're shaded, saving fill.">A) So the depth test rejects hidden pixels early, saving shading work</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Back-to-front is for transparency, not opaques.">B) So blending is correct</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Order isn't about the skybox.">C) So the skybox draws first</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> You want a full-screen colour effect applied after all geometry but before bloom/tonemapping. Which <code>RenderPassEvent</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That's before opaques are even drawn.">A) <code>BeforeRenderingOpaques</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! BeforeRenderingPostProcessing runs after transparents and before the post stack — ideal for a full-screen colour effect.">B) <code>BeforeRenderingPostProcessing</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="That's after post has already run.">C) <code>AfterRenderingPostProcessing</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> The Frame Debugger shows 500 opaque objects as 500 separate draws. What does that indicate?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Un-batched draws mean something (a keyword or incompatible shader) is breaking the SRP Batcher — a batching problem to fix.">A) Batching is broken — something is stopping the SRP Batcher</button>
+                            <button class="quiz-option" data-correct="false" data-hint="That's not normal or optimal — it's the symptom of broken batching.">B) Everything is optimal</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The Frame Debugger reports draws accurately; it's telling you the truth.">C) The Frame Debugger is miscounting</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>URP is a <strong>Scriptable Render Pipeline</strong> — the frame is C# you can read and extend, run per camera after culling.</li>
+                        <li>A frame's backbone: <strong>shadows → (depth) → opaque → skybox → transparent → post → final blit</strong>.</li>
+                        <li>Opaques draw <strong>front-to-back</strong> (early-Z); transparents draw <strong>back-to-front</strong> (correct blending, more overdraw).</li>
+                        <li><strong><code>RenderPassEvent</code></strong> names the injection points where custom passes hook in — choosing the right one is half the battle.</li>
+                        <li>The <strong>Frame Debugger</strong> steps through every draw call — your first stop for batching, ordering, overdraw, and render-target questions.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You can see the frame; now you'll write the code that runs inside it. In <strong>Lesson 5.2: Writing Shaders in HLSL</strong> we leave Shader Graph behind and author a real URP shader by hand — vertex and fragment stages, the URP shader library, and a genuine render of the result.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🖼️ You can read a frame now</h3>
+                    <p>Passes in order, injection points between them, and a debugger to step through it all. Everything else in this module is a variation on that one picture.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_20.html" class="prev-lesson">← Previous: Simulating Thousands of Entities</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_22.html" class="next-lesson">Next: Writing Shaders in HLSL →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

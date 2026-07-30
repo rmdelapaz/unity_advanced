@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Dependency Injection and Inversion of Control in Unity: kill the singleton and FindObjectOfType habit, program to interfaces, and inject dependencies. Constructor vs method vs property injection, a hand-rolled DI container, Service Locator trade-offs, the composition root, and VContainer/Zenject.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 1.2: Dependency Injection &amp; Inversion of Control — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 1: Advanced Architecture &amp; Async</a></li>
+            <li aria-current="page">Lesson 1.2: Dependency Injection &amp; Inversion of Control</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🔌 Lesson 1.2: Dependency Injection &amp; Inversion of Control</h1>
+                <p class="lead">Assemblies (Lesson 1.1) enforce <em>which</em> modules may depend on which. But inside those boundaries, how does a gameplay class get hold of the audio system, the save system, the analytics service it needs? The instinctive answers — a singleton, <code>FindObjectOfType</code>, a public field dragged in the Inspector — all weld classes to concrete types and to each other. This lesson replaces that with <strong>Inversion of Control</strong>: classes declare what they need as <em>interfaces</em>, and something external hands them a concrete implementation. You'll build a tiny DI container by hand so the idea is never magic, then weigh it against the Service Locator and the mature frameworks.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Diagnose the coupling caused by singletons and <code>FindObjectOfType</code>, and explain why it hurts testing and change</li>
+                        <li>Define <strong>Inversion of Control</strong> and distinguish the three injection styles — constructor, method, property</li>
+                        <li>Use <strong>interfaces as seams</strong> so consumers depend on abstractions, not concrete classes</li>
+                        <li>Write a small hand-rolled <strong>DI container</strong> that registers and resolves services</li>
+                        <li>Compare <strong>Service Locator</strong> and true DI, and place both correctly in a <strong>composition root</strong></li>
+                        <li>Recognize when to reach for <strong>VContainer</strong> or <strong>Zenject</strong> instead of rolling your own</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 1.1 (assemblies) and comfort with C# interfaces &amp; generics</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#coupling" class="toc-link">The Tight-Coupling Problem</a></li>
+                        <li><a href="#ioc" class="toc-link">Inversion of Control</a></li>
+                        <li><a href="#seams" class="toc-link">Interfaces as Seams</a></li>
+                        <li><a href="#styles" class="toc-link">Three Ways to Inject</a></li>
+                        <li><a href="#container" class="toc-link">A Hand-Rolled DI Container</a></li>
+                        <li><a href="#locator" class="toc-link">Service Locator vs DI</a></li>
+                        <li><a href="#root" class="toc-link">The Composition Root</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="coupling" class="lesson-section">
+                <h2>The Tight-Coupling Problem</h2>
+                <p>Consider a wholly ordinary Unity pattern. A player script wants to play a footstep sound, so it grabs the audio manager the easy way:</p>
+                <pre><code class="language-csharp">public class PlayerController : MonoBehaviour
+{
+    void Step()
+    {
+        // The tempting, tightly-coupled way.
+        AudioManager.Instance.Play("footstep");
+    }
+}</code></pre>
+                <p>It works — and it quietly creates four problems that compound as the project grows.</p>
+                <ul>
+                    <li><strong>Hidden dependency.</strong> Nothing in <code>PlayerController</code>'s signature says it needs audio. You only discover it by reading every line. Its true dependencies are invisible.</li>
+                    <li><strong>Hard-wired concrete type.</strong> It's bolted to the exact class <code>AudioManager</code>. Want a different implementation for mobile, or a silent one, or a fake? You can't — the type is baked in.</li>
+                    <li><strong>Untestable.</strong> To unit-test <code>Step()</code> you must spin up a real <code>AudioManager</code> singleton and an audio system. There's no seam to insert a stand-in.</li>
+                    <li><strong>Global mutable state.</strong> <code>Instance</code> is a global anyone can reach and mutate, with lifetime and initialization-order hazards that surface as null-reference bugs on scene load.</li>
+                </ul>
+                <p><code>FindObjectOfType&lt;AudioManager&gt;()</code> and public-field-dragged-in-the-Inspector are the same disease in different clothes: the consumer reaches out and takes a concrete dependency. The cure is to invert that.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>Coupling</strong> is how tightly one class is bound to the details of another. When <code>PlayerController</code> names <code>AudioManager</code> directly, they're <em>tightly coupled</em> — you can't change or test one without the other. The goal is <em>loose</em> coupling: the consumer depends only on an abstraction, and the concrete choice is made elsewhere.</p>
+                </div>
+            </section>
+
+            <section id="ioc" class="lesson-section">
+                <h2>Inversion of Control</h2>
+                <p><strong>Inversion of Control (IoC)</strong> is a simple flip in <em>who decides</em>. Normally a class controls its own dependencies: it constructs or looks up the concrete objects it uses. Under IoC, that control is inverted — the class stops reaching out for its dependencies and instead <em>receives</em> them from the outside. It says what it needs; something else decides what to give it.</p>
+                <p><strong>Dependency Injection (DI)</strong> is the most common way to achieve IoC: dependencies are <em>injected</em> (passed in) rather than looked up. "Don't call us, we'll call you" — the class is handed everything it requires and is free to just <em>use</em> it.</p>
+                <p>Rewriting the player with injection:</p>
+                <pre><code class="language-csharp">public class PlayerController : MonoBehaviour
+{
+    private IAudioService _audio;   // depends on an abstraction
+
+    // Something external injects the concrete service.
+    public void Construct(IAudioService audio) =&gt; _audio = audio;
+
+    void Step() =&gt; _audio.Play("footstep");
+}</code></pre>
+                <p>Now the dependency is <em>explicit</em> (it's in the API), <em>abstract</em> (an interface, not a class), and <em>swappable</em> (a test can pass a fake). The player no longer knows or cares which audio implementation it got. That is the whole game.</p>
+
+                <blockquote>
+                    <strong>💡 IoC vs DI.</strong> IoC is the principle (control over dependencies moves outward); DI is a technique that implements it (dependencies are passed in). The Service Locator later in this lesson is <em>also</em> a form of IoC — a different, more compromised one.
+                </blockquote>
+            </section>
+
+            <section id="seams" class="lesson-section">
+                <h2>Interfaces as Seams</h2>
+                <p>The linchpin is the <strong>interface</strong>. It's the seam along which you separate <em>what</em> a service does from <em>how</em> it does it. Define the contract:</p>
+                <pre><code class="language-csharp">public interface IAudioService
+{
+    void Play(string clipId);
+    void SetVolume(float volume);
+}</code></pre>
+                <p>Then supply one or more implementations behind it — the real one, plus whatever alternatives you need:</p>
+                <pre><code class="language-csharp">public class AudioService : IAudioService
+{
+    public void Play(string clipId) { /* real AudioSource work */ }
+    public void SetVolume(float volume) { /* ... */ }
+}
+
+// A test double: records calls, makes no sound.
+public class FakeAudioService : IAudioService
+{
+    public string LastClip;
+    public void Play(string clipId) =&gt; LastClip = clipId;
+    public void SetVolume(float volume) { }
+}</code></pre>
+                <p>Because <code>PlayerController</code> depends on <code>IAudioService</code>, you can hand it <code>AudioService</code> in the game and <code>FakeAudioService</code> in a test, and it can't tell the difference. The interface is the crack you pry the concrete type out through — the same seam idea that breaks the assembly cycles from Lesson 1.1: put the interface in <code>Core</code>, let both sides depend down on it.</p>
+
+                <p>Now visualize the payoff. Below, the same four classes are drawn two ways — tangled by direct references, then untangled through interfaces.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 460" role="img" aria-labelledby="diTitle diDesc">
+                        <title id="diTitle">Direct-reference coupling versus dependency injection through interfaces</title>
+                        <desc id="diDesc">On the left, a tangled graph: a Player, an Enemy, and a UI class each draw arrows directly to concrete AudioManager, SaveManager, and Analytics singletons, crossing over each other into a knot. On the right, the same Player, Enemy, and UI depend only on interfaces IAudio, ISave, and IAnalytics arranged in a clean column; a separate composition root on the far side supplies the concrete AudioService, SaveService, and AnalyticsService that implement those interfaces, so no consumer names a concrete type.</desc>
+
+                        <rect x="0" y="0" width="900" height="460" rx="8" fill="#22262d"/>
+
+                        <!-- LEFT: tangled -->
+                        <text x="215" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#ff8a8a">✗ Direct references — a knot</text>
+
+                        <!-- consumers -->
+                        <rect x="30" y="70" width="110" height="44" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="85" y="97" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">Player</text>
+                        <rect x="30" y="140" width="110" height="44" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="85" y="167" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">Enemy</text>
+                        <rect x="30" y="210" width="110" height="44" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="85" y="237" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">UI</text>
+
+                        <!-- concretes -->
+                        <rect x="290" y="70" width="120" height="44" rx="6" fill="#5a2f33" stroke="#a04850"/>
+                        <text x="350" y="92" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#fff">AudioManager</text>
+                        <text x="350" y="106" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#e6b8bc">.Instance</text>
+                        <rect x="290" y="140" width="120" height="44" rx="6" fill="#5a2f33" stroke="#a04850"/>
+                        <text x="350" y="162" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#fff">SaveManager</text>
+                        <text x="350" y="176" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#e6b8bc">.Instance</text>
+                        <rect x="290" y="210" width="120" height="44" rx="6" fill="#5a2f33" stroke="#a04850"/>
+                        <text x="350" y="232" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#fff">Analytics</text>
+                        <text x="350" y="246" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#e6b8bc">.Instance</text>
+
+                        <defs>
+                            <marker id="ard" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#ff8a8a"/>
+                            </marker>
+                            <marker id="agd" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/>
+                            </marker>
+                        </defs>
+
+                        <!-- tangled arrows: every consumer to multiple concretes -->
+                        <g stroke="#ff8a8a" stroke-width="1.8" fill="none" opacity="0.85">
+                            <line x1="140" y1="88" x2="288" y2="90" marker-end="url(#ard)"/>
+                            <line x1="140" y1="96" x2="288" y2="158" marker-end="url(#ard)"/>
+                            <line x1="140" y1="158" x2="288" y2="96" marker-end="url(#ard)"/>
+                            <line x1="140" y1="166" x2="288" y2="228" marker-end="url(#ard)"/>
+                            <line x1="140" y1="228" x2="288" y2="162" marker-end="url(#ard)"/>
+                            <line x1="140" y1="236" x2="288" y2="232" marker-end="url(#ard)"/>
+                        </g>
+                        <text x="215" y="300" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">each consumer names each concrete singleton directly</text>
+
+                        <!-- divider -->
+                        <line x1="452" y1="40" x2="452" y2="420" stroke="#3a4149" stroke-width="1.5" stroke-dasharray="4 4"/>
+
+                        <!-- RIGHT: clean DI -->
+                        <text x="676" y="34" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#9be6b0">✔ Through interfaces — clean</text>
+
+                        <!-- consumers -->
+                        <rect x="480" y="70" width="96" height="40" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="528" y="95" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">Player</text>
+                        <rect x="480" y="150" width="96" height="40" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="528" y="175" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">Enemy</text>
+                        <rect x="480" y="230" width="96" height="40" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="528" y="255" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#fff">UI</text>
+
+                        <!-- interfaces -->
+                        <rect x="628" y="70" width="104" height="40" rx="20" fill="#2f4a5a" stroke="#5b90a0"/>
+                        <text x="680" y="95" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" font-weight="700" fill="#8fd0ff">IAudio</text>
+                        <rect x="628" y="150" width="104" height="40" rx="20" fill="#2f4a5a" stroke="#5b90a0"/>
+                        <text x="680" y="175" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" font-weight="700" fill="#8fd0ff">ISave</text>
+                        <rect x="628" y="230" width="104" height="40" rx="20" fill="#2f4a5a" stroke="#5b90a0"/>
+                        <text x="680" y="255" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" font-weight="700" fill="#8fd0ff">IAnalytics</text>
+
+                        <!-- concretes column -->
+                        <rect x="784" y="70" width="104" height="40" rx="6" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="836" y="95" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#fff">AudioService</text>
+                        <rect x="784" y="150" width="104" height="40" rx="6" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="836" y="175" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#fff">SaveService</text>
+                        <rect x="784" y="230" width="104" height="40" rx="6" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="836" y="255" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" font-weight="700" fill="#fff">AnalyticsService</text>
+
+                        <!-- consumer -> interface (straight, parallel) -->
+                        <g stroke="#9be6b0" stroke-width="2" fill="none">
+                            <line x1="576" y1="90" x2="626" y2="90" marker-end="url(#agd)"/>
+                            <line x1="576" y1="170" x2="626" y2="170" marker-end="url(#agd)"/>
+                            <line x1="576" y1="250" x2="626" y2="250" marker-end="url(#agd)"/>
+                        </g>
+                        <!-- concrete ..implements..> interface (dashed, back) -->
+                        <g stroke="#4f9e77" stroke-width="1.6" fill="none" stroke-dasharray="5 4">
+                            <line x1="784" y1="90" x2="734" y2="90" marker-end="url(#agd)"/>
+                            <line x1="784" y1="170" x2="734" y2="170" marker-end="url(#agd)"/>
+                            <line x1="784" y1="250" x2="734" y2="250" marker-end="url(#agd)"/>
+                        </g>
+
+                        <text x="600" y="300" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9be6b0">depend on ↦</text>
+                        <text x="810" y="300" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#4f9e77">↤ implements</text>
+
+                        <!-- composition root -->
+                        <rect x="600" y="336" width="270" height="86" rx="8" fill="#30363f" stroke="#454d57"/>
+                        <text x="735" y="360" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#ffd79a">Composition Root</text>
+                        <text x="735" y="382" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#c9d4e6">creates the concretes &amp; injects them</text>
+                        <text x="735" y="402" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">the ONE place that names concrete types</text>
+                    </svg>
+                    <figcaption>Figure 1: The same objects, coupled two ways. On the left every consumer reaches directly for a concrete <strong style="color:#ff8a8a">singleton</strong> — a knot that resists change and testing. On the right consumers depend only on <strong style="color:#8fd0ff">interfaces</strong>; the concrete services implement them, and a single <strong style="color:#ffd79a">composition root</strong> is the only place that names concrete types and wires everything together.</figcaption>
+                </figure>
+            </section>
+
+            <section id="styles" class="lesson-section">
+                <h2>Three Ways to Inject</h2>
+                <p>There are three places a dependency can be handed in. Each has a moment it fits.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🏗️ Constructor</h4>
+                        <p>Dependencies are parameters of the constructor. The object is <strong>never valid without them</strong> — the compiler enforces it, and the dependency is immutable after. The default choice for plain C# classes.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>📥 Method</h4>
+                        <p>Passed into a specific method (or an <code>Init</code>/<code>Construct</code> method). Useful for <code>MonoBehaviour</code>s, which Unity constructs for you so you <em>can't</em> use a real constructor.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🔧 Property</h4>
+                        <p>Set through a public property/setter after construction. The most optional and the least safe — the object can exist half-wired — so reserve it for genuinely optional dependencies.</p>
+                    </div>
+                </div>
+
+                <p>For pure C# classes, prefer <strong>constructor injection</strong> — the object literally cannot be built in an invalid state:</p>
+                <pre><code class="language-csharp">public class ScoreReporter
+{
+    private readonly IAnalytics _analytics;
+    // Can't construct a ScoreReporter without analytics — dependency is guaranteed.
+    public ScoreReporter(IAnalytics analytics) =&gt; _analytics = analytics;
+
+    public void Report(int score) =&gt; _analytics.Track("score", score);
+}</code></pre>
+
+                <div class="card card-warning">
+                    <h4>⚠️ MonoBehaviours can't use constructors</h4>
+                    <p>Unity instantiates <code>MonoBehaviour</code>s itself (via <code>AddComponent</code> / scene load), so you never call their constructor and can't inject through it. For components, use <strong>method injection</strong> — a <code>Construct(...)</code> or <code>Inject(...)</code> method your composition root calls right after instantiation — which is exactly what real DI frameworks do for you under the hood.</p>
+                </div>
+            </section>
+
+            <section id="container" class="lesson-section">
+                <h2>A Hand-Rolled DI Container</h2>
+                <p>Unity ships <em>no</em> DI container. To make the idea concrete — and to demystify the frameworks — let's build a minimal one. A container does two jobs: you <strong>register</strong> which implementation stands behind each interface, then you <strong>resolve</strong> an interface to get that implementation.</p>
+                <pre><code class="language-csharp">using System;
+using System.Collections.Generic;
+
+public class ServiceContainer
+{
+    // Map: interface type -&gt; factory that produces its implementation.
+    private readonly Dictionary&lt;Type, Func&lt;object&gt;&gt; _factories = new();
+    private readonly Dictionary&lt;Type, object&gt; _singletons = new();
+
+    // Register a single shared instance (created once, reused).
+    public void RegisterSingleton&lt;TInterface&gt;(TInterface instance)
+        =&gt; _singletons[typeof(TInterface)] = instance;
+
+    // Register a factory: a new instance is produced on each Resolve.
+    public void Register&lt;TInterface&gt;(Func&lt;TInterface&gt; factory)
+        =&gt; _factories[typeof(TInterface)] = () =&gt; factory();
+
+    // Resolve an interface to its registered implementation.
+    public TInterface Resolve&lt;TInterface&gt;()
+    {
+        var type = typeof(TInterface);
+        if (_singletons.TryGetValue(type, out var single))
+            return (TInterface)single;
+        if (_factories.TryGetValue(type, out var factory))
+            return (TInterface)factory();
+        throw new InvalidOperationException($"No registration for {type.Name}");
+    }
+}</code></pre>
+                <p>Usage reads exactly like the frameworks: register everything once, then resolve as needed.</p>
+                <pre><code class="language-csharp">var container = new ServiceContainer();
+
+// Wire concrete implementations behind their interfaces — once, up front.
+container.RegisterSingleton&lt;IAudioService&gt;(new AudioService());
+container.Register&lt;IScoreReporter&gt;(() =&gt;
+    new ScoreReporter(container.Resolve&lt;IAnalytics&gt;()));
+
+// Later, a consumer asks for the abstraction and gets a concrete.
+IAudioService audio = container.Resolve&lt;IAudioService&gt;();
+audio.Play("footstep");</code></pre>
+                <p>That's the whole essence of a DI container in ~30 lines: a dictionary from interface to factory, plus resolve. Production frameworks add automatic constructor injection (they inspect a type's constructor and resolve its parameters for you), lifetime scopes, and <code>MonoBehaviour</code> injection — but the core is this.</p>
+
+                <blockquote>
+                    <strong>💡 Two lifetimes, already.</strong> Note the split above: <code>RegisterSingleton</code> hands back one shared instance forever; <code>Register</code> runs the factory every resolve for a fresh one. "Singleton vs transient" lifetime is a decision every container makes — here it's just which dictionary you used.
+                </blockquote>
+            </section>
+
+            <section id="locator" class="lesson-section">
+                <h2>Service Locator vs DI</h2>
+                <p>There's a close cousin worth knowing precisely because it's so tempting — and often a trap. A <strong>Service Locator</strong> is a global registry consumers <em>pull</em> from:</p>
+                <pre><code class="language-csharp">// Consumers reach into a global to FETCH dependencies.
+public static class Services
+{
+    private static readonly ServiceContainer _c = new();
+    public static void Provide&lt;T&gt;(T impl) =&gt; _c.RegisterSingleton(impl);
+    public static T Get&lt;T&gt;() =&gt; _c.Resolve&lt;T&gt;();
+}
+
+// Somewhere deep in a class:
+var audio = Services.Get&lt;IAudioService&gt;();   // pulled, not injected</code></pre>
+                <p>It fixes the <em>worst</em> part of the singleton — at least you code against <code>IAudioService</code>, so implementations are swappable and fakeable. But it keeps the part DI removes: the dependency is still <strong>hidden</strong>. A class using <code>Services.Get</code> looks self-sufficient while secretly reaching into a global. You can't tell what it needs from its signature, and a test must populate the global locator before the class runs.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-success pillar">
+                        <h4>✅ True DI</h4>
+                        <p>Dependencies are <strong>pushed in</strong> and visible in the constructor/method signature. Honest, testable, but requires wiring at a composition root.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>⚖️ Service Locator</h4>
+                        <p>Dependencies are <strong>pulled</strong> from a global. Less wiring, easy to retrofit, but hides what a class depends on — closer to a well-behaved singleton.</p>
+                    </div>
+                </div>
+
+                <p>The pragmatic verdict: prefer real injection for your own gameplay code, where honest signatures pay off. A Service Locator is a reasonable <em>pragmatic</em> compromise for cross-cutting concerns (logging, analytics) or when retrofitting DI into a codebase that wasn't built for it — but treat it as a step down, not the goal. We'll actually use a small container-as-locator hybrid in the Module 1 mini-project (Lesson 1.5), eyes open about the trade-off.</p>
+            </section>
+
+            <section id="root" class="lesson-section">
+                <h2>The Composition Root</h2>
+                <p>If consumers no longer create their own dependencies, <em>someone</em> must — in exactly one place. That place is the <strong>composition root</strong>: the single location, as close to the program's entry point as possible, where the entire object graph is assembled. It's the one spot allowed to name concrete types (it's the only box on the right of Figure 1 that touches concretes).</p>
+                <pre><code class="language-csharp">// The composition root — the ONE place that knows concrete types.
+public class GameBootstrapper : MonoBehaviour
+{
+    void Awake()
+    {
+        var container = new ServiceContainer();
+
+        // Register every service behind its interface.
+        container.RegisterSingleton&lt;IAudioService&gt;(new AudioService());
+        container.RegisterSingleton&lt;ISaveService&gt;(new FileSaveService());
+
+        // Inject into scene objects (method injection for MonoBehaviours).
+        var player = FindFirstObjectByType&lt;PlayerController&gt;();
+        player.Construct(container.Resolve&lt;IAudioService&gt;());
+    }
+}</code></pre>
+                <p>Everything downstream of the bootstrapper is blissfully ignorant of concrete types. Change <code>AudioService</code> to <code>MobileAudioService</code>? One line, one place. This <code>GameBootstrapper</code> is the seed of the Module 1 mini-project, where we grow it into a full boot sequence that initializes services asynchronously and then loads the game.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 The ecosystem: VContainer &amp; Zenject</h4>
+                    <p>You don't have to hand-roll this forever. Two mature DI frameworks dominate Unity: <strong>VContainer</strong> (modern, allocation-light, fast — the common recommendation today) and <strong>Zenject/Extenject</strong> (older, feature-rich, heavier). Both give you automatic constructor injection, <code>MonoBehaviour</code> injection, lifetime scopes tied to scenes, and a proper composition root API. Learn the concepts with your own container first — as we just did — <em>then</em> adopt a framework, and its magic will look like exactly what you already built.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: De-singleton a class</h3>
+                    <p><strong>Objective:</strong> Convert a tightly-coupled class to injection and prove it's testable.</p>
+                    <ol>
+                        <li>Start with a class that calls <code>AudioManager.Instance.Play(...)</code> directly.</li>
+                        <li>Extract an <code>IAudioService</code> interface with a <code>Play(string)</code> method.</li>
+                        <li>Change the class to receive an <code>IAudioService</code> (constructor if it's plain C#, a <code>Construct</code> method if it's a <code>MonoBehaviour</code>).</li>
+                        <li>Write a <code>FakeAudioService</code> that records the last clip played.</li>
+                        <li>In a quick test (or a throwaway scene), inject the fake, call the method, and assert the fake recorded the right clip.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ The key move</summary>
+                        <p>Once the class depends on <code>IAudioService</code> instead of <code>AudioManager.Instance</code>, the test injects <code>FakeAudioService</code> and checks <code>fake.LastClip == "footstep"</code> with no audio system, no singleton, no scene setup. That's the entire point: the seam made it testable. Contrast with the original, which you couldn't test without a live <code>AudioManager</code>.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Extend the container</h3>
+                    <p>Take the <code>ServiceContainer</code> from this lesson and add a <code>bool IsRegistered&lt;T&gt;()</code> method, plus a <code>Resolve</code> that throws a clear error naming the missing type (it already does — verify it). Then register two services where one depends on the other (e.g. <code>IScoreReporter</code> needs <code>IAnalytics</code>) and resolve the dependent one. Confirm the factory pulls its own dependency from the container.</p>
+                    <details>
+                        <summary>✅ What to notice</summary>
+                        <p>The factory for <code>IScoreReporter</code> calls <code>container.Resolve&lt;IAnalytics&gt;()</code> itself, so resolving the reporter transitively resolves analytics. This manual chaining is precisely what a real framework automates by reflecting over constructors — you're seeing the machinery a framework hides.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What does <em>Inversion of Control</em> invert?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Execution order isn't the point; it's about who supplies dependencies.">A) The order in which methods execute</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! IoC inverts control over dependencies — the class receives them from outside instead of creating or looking them up itself.">B) Who controls a class's dependencies — the class receives them instead of fetching them</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Inheritance direction is unrelated to IoC.">C) The direction of a class hierarchy</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why is constructor injection preferred for plain C# classes?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It isn't about speed; it's about validity guarantees.">A) It's faster at runtime than other injection styles</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Required dependencies become constructor parameters, so the object cannot be constructed in an invalid, half-wired state.">B) The object can't be constructed without its required dependencies, so it's never half-wired</button>
+                            <button class="quiz-option" data-correct="false" data-hint="MonoBehaviours are the exception — you can't use their constructor at all.">C) It works for MonoBehaviours out of the box</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> How does a Service Locator differ from true dependency injection?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A locator is pulled from — dependencies stay hidden — whereas DI pushes dependencies in through the signature, making them explicit.">A) A locator is <em>pulled</em> from a global, hiding dependencies; DI <em>pushes</em> them in, making them explicit</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Both can code against interfaces; the difference is push vs pull and visibility.">B) A locator can't use interfaces, but DI can</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Neither is inherently multithreaded; that's unrelated.">C) A locator runs on a background thread; DI runs on the main thread</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> What is a <em>composition root</em>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That describes an interface/seam, not the root.">A) The base interface every service must implement</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The composition root is the single place near the entry point where the object graph is assembled and concrete types are chosen.">B) The single place near the entry point where the object graph is assembled and concrete types are chosen</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's not a folder; it's a code location that wires dependencies.">C) The root folder where all service scripts live</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Singletons and <code>FindObjectOfType</code> create <strong>tight coupling</strong>: hidden, concrete, untestable dependencies backed by global state.</li>
+                        <li><strong>Inversion of Control</strong> flips who supplies dependencies — the class receives them; <strong>DI</strong> injects them rather than looking them up.</li>
+                        <li><strong>Interfaces are the seam</strong> that lets a consumer depend on an abstraction while the concrete choice is made elsewhere (and swapped for a fake in tests).</li>
+                        <li>Inject via <strong>constructor</strong> (preferred, guarantees validity), <strong>method</strong> (for <code>MonoBehaviour</code>s), or <strong>property</strong> (optional deps).</li>
+                        <li>A <strong>DI container</strong> is just a map from interface to factory plus resolve — you built one in ~30 lines; frameworks add auto-injection and lifetimes on top.</li>
+                        <li>A <strong>Service Locator</strong> hides dependencies (a step down from DI); the <strong>composition root</strong> is the one place that names concrete types. <strong>VContainer</strong>/<strong>Zenject</strong> are the ecosystem's frameworks.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You can now structure code and wire it cleanly. Next we take control of <em>time</em>. In <strong>Lesson 1.3: Async &amp; Await in Unity 6 — Awaitable</strong>, you'll move past coroutines to real <code>async</code>/<code>await</code> with Unity 6's new <code>Awaitable</code> type — the tool your bootstrapper will use to initialize those injected services in order before the game starts.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🔌 Loosely coupled, by design</h3>
+                    <p>Depend on interfaces, inject the concretes at one composition root, and your code becomes swappable and testable. This is the wiring pattern the whole module's mini-project is built on.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_01.html" class="prev-lesson">← Previous: Assembly Definitions &amp; Structuring a Large Project</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_03.html" class="next-lesson">Next: Async &amp; Await in Unity 6 — Awaitable →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

@@ -1,0 +1,160 @@
+{
+  "course": {
+    "title": "Unity Advanced",
+    "subtitle": "Performance, DOTS, Rendering, Netcode & Pipeline in Unity 6",
+    "description": "The third course in the ladder after Unity Fundamentals and Unity Intermediate. A focused, deep dive into professional Unity 6 engineering: advanced architecture and async, performance engineering, the Job System and Burst, DOTS/ECS, advanced rendering and HLSL, multiplayer netcode, editor tooling and Addressables, and testing, CI and shipping.",
+    "author": {
+      "name": "Ray de la Paz",
+      "email": "contact via website",
+      "website": "https://rays-home.netlify.app/",
+      "bio": "Technical trainer, full-stack developer, and course developer with 30+ years of experience."
+    },
+    "version": "1.0.0",
+    "lastUpdated": "2026-07-30",
+    "language": "en",
+    "difficulty": "advanced",
+    "estimatedHours": 40,
+    "tags": ["unity", "unity6", "dots", "ecs", "job-system", "burst", "performance", "hlsl", "compute-shaders", "netcode", "addressables", "ci", "advanced"]
+  },
+
+  "branding": {
+    "primaryColor": "#3b82f6",
+    "secondaryColor": "#f8fafc",
+    "accentColor": "#6366f1",
+    "fontFamily": "Segoe UI, system-ui, -apple-system, sans-serif",
+    "logo": "images/logo.png",
+    "favicon": "favicon.png"
+  },
+
+  "navigation": {
+    "showBreadcrumbs": true,
+    "showProgressBar": false,
+    "showLessonNav": true,
+    "showSearch": true,
+    "showThemeToggle": true,
+    "keyboardShortcuts": true,
+    "externalLinks": [
+      { "label": "Ray's House of Fun", "url": "https://rays-home.netlify.app/" },
+      { "label": "Contact", "url": "https://rays-home.netlify.app/contact" }
+    ]
+  },
+
+  "modules": [
+    {
+      "id": "module-1",
+      "title": "Advanced Architecture & Async",
+      "track": "Foundation",
+      "description": "Structure a large project and control the flow of time: assembly definitions, dependency injection, async/await with Awaitable, and design patterns at scale.",
+      "lessons": [
+        { "id": "lesson-1-1", "title": "Assembly Definitions & Structuring a Large Project", "filename": "lesson_01.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-1-2", "title": "Dependency Injection & Inversion of Control", "filename": "lesson_02.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-1-3", "title": "Async & Await in Unity 6 — Awaitable", "filename": "lesson_03.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-1-4", "title": "Scaling Design Patterns — Command, State, Service Locator & Event Bus", "filename": "lesson_04.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-1-5", "title": "Mini-Project: A Game Bootstrapper with a Service Container", "filename": "lesson_05.html", "duration": "90 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-2",
+      "title": "Performance Engineering",
+      "track": "Performance Track",
+      "description": "Measure before you optimize. The Profiler and Memory Profiler in depth, garbage-free C#, and how modern URP batches your draw calls.",
+      "lessons": [
+        { "id": "lesson-2-1", "title": "The Profiler in Depth", "filename": "lesson_06.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-2-2", "title": "Hunting Memory — The Memory Profiler", "filename": "lesson_07.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-2-3", "title": "Writing Garbage-Free Code", "filename": "lesson_08.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-2-4", "title": "Draw Calls & Batching — SRP Batcher, GPU Instancing & the GPU Resident Drawer", "filename": "lesson_09.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-2-5", "title": "Mini-Project: Profiling & Fixing a Stress Scene", "filename": "lesson_10.html", "duration": "90 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-3",
+      "title": "The Job System & Burst",
+      "track": "Performance Track",
+      "description": "Think in data, not objects. Schedule safe multithreaded work with the C# Job System, NativeContainers, and compile it to blazing native code with Burst.",
+      "lessons": [
+        { "id": "lesson-3-1", "title": "Data-Oriented Thinking", "filename": "lesson_11.html", "duration": "45 minutes", "difficulty": "advanced" },
+        { "id": "lesson-3-2", "title": "Your First Job — IJob & Scheduling", "filename": "lesson_12.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-3-3", "title": "NativeContainers & the Safety System", "filename": "lesson_13.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-3-4", "title": "Parallel Jobs & Burst Compilation", "filename": "lesson_14.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-3-5", "title": "Mini-Project: A Burst-Compiled Parallel Field Simulation", "filename": "lesson_15.html", "duration": "90 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-4",
+      "title": "DOTS / ECS",
+      "track": "Performance Track",
+      "description": "The Entity Component System — Unity's data-oriented stack for simulating hundreds of thousands of objects. Entities, components, systems, queries, and baking authoring GameObjects into entities.",
+      "lessons": [
+        { "id": "lesson-4-1", "title": "The ECS Mindset — Entities, Components & Systems", "filename": "lesson_16.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-4-2", "title": "Components & Archetypes", "filename": "lesson_17.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-4-3", "title": "Systems & Queries — ISystem & SystemAPI", "filename": "lesson_18.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-4-4", "title": "Baking — From GameObjects to Entities", "filename": "lesson_19.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-4-5", "title": "Mini-Project: Simulating Thousands of Entities", "filename": "lesson_20.html", "duration": "90 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-5",
+      "title": "Advanced Rendering",
+      "track": "Rendering Track",
+      "description": "Go beyond Shader Graph. Read the frame, write real HLSL shaders, inject custom passes with Scriptable Renderer Features, and run general-purpose GPU work with compute shaders.",
+      "lessons": [
+        { "id": "lesson-5-1", "title": "The URP Frame & the Frame Debugger", "filename": "lesson_21.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-5-2", "title": "Writing Shaders in HLSL", "filename": "lesson_22.html", "duration": "75 minutes", "difficulty": "advanced" },
+        { "id": "lesson-5-3", "title": "Scriptable Renderer Features & Custom Passes", "filename": "lesson_23.html", "duration": "75 minutes", "difficulty": "advanced" },
+        { "id": "lesson-5-4", "title": "Compute Shaders — General-Purpose GPU Work", "filename": "lesson_24.html", "duration": "75 minutes", "difficulty": "advanced" },
+        { "id": "lesson-5-5", "title": "Mini-Project: A Custom Post-Process Renderer Feature", "filename": "lesson_25.html", "duration": "90 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-6",
+      "title": "Multiplayer — Netcode for GameObjects",
+      "track": "Netcode Track",
+      "description": "Build networked games with Unity's official Netcode for GameObjects: the client/server model, spawning and ownership, synchronized NetworkVariables, and RPCs.",
+      "lessons": [
+        { "id": "lesson-6-1", "title": "Networking Foundations — Client/Server & Topologies", "filename": "lesson_26.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-6-2", "title": "NetworkObjects, Spawning & Ownership", "filename": "lesson_27.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-6-3", "title": "NetworkVariables & State Synchronization", "filename": "lesson_28.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-6-4", "title": "RPCs — Remote Procedure Calls", "filename": "lesson_29.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-6-5", "title": "Mini-Project: A Small Authoritative Multiplayer Prototype", "filename": "lesson_30.html", "duration": "120 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-7",
+      "title": "Editor Tooling & Addressables",
+      "track": "Tooling Track",
+      "description": "Bend the Editor to your workflow with custom inspectors and UI Toolkit EditorWindows, then manage content asynchronously at scale with the Addressables system.",
+      "lessons": [
+        { "id": "lesson-7-1", "title": "Custom Inspectors & Property Drawers", "filename": "lesson_31.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-7-2", "title": "EditorWindows with UI Toolkit", "filename": "lesson_32.html", "duration": "75 minutes", "difficulty": "advanced" },
+        { "id": "lesson-7-3", "title": "Addressables — Async Content Management", "filename": "lesson_33.html", "duration": "75 minutes", "difficulty": "advanced" },
+        { "id": "lesson-7-4", "title": "Mini-Project: A Level-Layout Tool with Addressable Loading", "filename": "lesson_34.html", "duration": "120 minutes", "difficulty": "advanced" }
+      ]
+    },
+    {
+      "id": "module-8",
+      "title": "Testing, CI & Shipping",
+      "track": "Tooling Track",
+      "description": "Ship with confidence: automated tests with the Unity Test Framework, continuous integration and cloud builds, live-ops, and a final tested, CI-built release — plus where to go next.",
+      "lessons": [
+        { "id": "lesson-8-1", "title": "The Unity Test Framework — Edit & Play Mode Tests", "filename": "lesson_35.html", "duration": "75 minutes", "difficulty": "advanced" },
+        { "id": "lesson-8-2", "title": "Automated & Cloud Builds (CI/CD)", "filename": "lesson_36.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-8-3", "title": "Live-Ops — Analytics, Remote Config & Crash Reporting", "filename": "lesson_37.html", "duration": "60 minutes", "difficulty": "advanced" },
+        { "id": "lesson-8-4", "title": "Mini-Project: A Tested, CI-Built Release — and Where to Go Next", "filename": "lesson_38.html", "duration": "120 minutes", "difficulty": "advanced" }
+      ]
+    }
+  ],
+
+  "features": {
+    "codeHighlighting": true,
+    "copyCodeButton": true,
+    "progressTracking": false,
+    "offlineSupport": false,
+    "responsiveDesign": true,
+    "accessibility": true,
+    "printFriendly": true,
+    "searchEnabled": true,
+    "darkMode": true,
+    "mermaidDiagrams": true,
+    "svgDarkModeSupport": true
+  }
+}

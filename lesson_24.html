@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Compute shaders: run general-purpose parallel work on the GPU outside the draw pipeline. Kernels and thread groups, RWTexture2D and ComputeBuffer/GraphicsBuffer, dispatching from C#, and a real compute-generated image rendered in Unity 6.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 5.4: Compute Shaders — General-Purpose GPU Work — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); max-width: 620px; }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 5: Advanced Rendering</a></li>
+            <li aria-current="page">Lesson 5.4: Compute Shaders</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧮 Lesson 5.4: Compute Shaders — General-Purpose GPU Work</h1>
+                <p class="lead">The GPU isn't only for drawing. With <strong>compute shaders</strong> you can run arbitrary, massively parallel work on it — simulations, image processing, procedural generation, particle systems, culling — outside the draw pipeline entirely. If Module 3 taught you to spread work across CPU cores, this lesson spreads it across the GPU's <em>thousands</em> of cores, and captures the result directly.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain what a compute shader is and how it differs from vertex/fragment shaders</li>
+                        <li>Write a <code>.compute</code> kernel with <code>[numthreads]</code> and <code>SV_DispatchThreadID</code></li>
+                        <li>Write to a <code>RWTexture2D</code> and read/write a <code>ComputeBuffer</code>/<code>GraphicsBuffer</code></li>
+                        <li>Dispatch a kernel from C# and choose the right <strong>thread-group count</strong></li>
+                        <li>Manage GPU resources (<code>enableRandomWrite</code>, <code>Release</code>) correctly</li>
+                        <li>Recognise the workloads where compute shaders win</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 75 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 5.2 (HLSL) and Module 3 (parallel thinking)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#what" class="toc-link">What Is a Compute Shader?</a></li>
+                        <li><a href="#threads" class="toc-link">Kernels &amp; Thread Groups</a></li>
+                        <li><a href="#kernel" class="toc-link">Writing the Kernel</a></li>
+                        <li><a href="#dispatch" class="toc-link">Dispatching from C#</a></li>
+                        <li><a href="#result" class="toc-link">The Result</a></li>
+                        <li><a href="#buffers" class="toc-link">Beyond Textures: Buffers</a></li>
+                        <li><a href="#when" class="toc-link">When to Use Compute</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="what" class="lesson-section">
+                <h2>What Is a Compute Shader?</h2>
+                <p>A vertex or fragment shader is locked into the rendering pipeline — it runs per vertex or per pixel, when the GPU draws. A <strong>compute shader</strong> has no such role: it's a program you launch on the GPU to do <em>whatever you want</em>, reading and writing arbitrary buffers and textures. It's the GPU as a general parallel processor.</p>
+                <p>Why bother? Because the GPU has <em>thousands</em> of tiny cores. For problems that are "do the same simple thing to a million elements" — every pixel of an image, every particle in a system, every cell of a simulation grid — the GPU annihilates the CPU. The catch is the same discipline Module 3 drilled: the work must be highly parallel and data-oriented, and getting results back to the CPU costs (so ideally you keep them on the GPU and render them directly).</p>
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>A <strong>kernel</strong> is a compute shader's entry-point function (marked with <code>#pragma kernel</code>). You <strong>dispatch</strong> a kernel to run across a grid of threads; each thread handles one element (one pixel, one particle) and knows its own coordinates.</p>
+                </div>
+            </section>
+
+            <section id="threads" class="lesson-section">
+                <h2>Kernels &amp; Thread Groups</h2>
+                <p>When you dispatch, the GPU runs the kernel across a 3D grid of <strong>threads</strong>, organised into <strong>thread groups</strong>. The <code>[numthreads(x,y,z)]</code> attribute sets how many threads are in <em>one group</em>; your C# <code>Dispatch(groupsX, groupsY, groupsZ)</code> call sets how many <em>groups</em>. Total threads = groups × threads-per-group.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 300" role="img" aria-labelledby="dispTitle dispDesc">
+                        <title id="dispTitle">Dispatching a compute kernel across thread groups</title>
+                        <desc id="dispDesc">A 1024 by 1024 image divided into a grid of thread groups. Each group is 8 by 8 threads set by numthreads. Dispatching 128 by 128 groups covers the whole image, one thread per pixel, and each thread knows its pixel via SV_DispatchThreadID.</desc>
+                        <rect x="0" y="0" width="900" height="300" rx="8" fill="#22262d"/>
+                        <text x="20" y="30" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">Dispatch(128, 128, 1) × numthreads(8, 8, 1) = 1024 × 1024 threads</text>
+                        <!-- big grid -->
+                        <rect x="24" y="50" width="220" height="220" rx="4" fill="#1c2530" stroke="#3a4149"/>
+                        <g stroke="#3a4756" stroke-width="1">
+                            <line x1="79" y1="50" x2="79" y2="270"/><line x1="134" y1="50" x2="134" y2="270"/><line x1="189" y1="50" x2="189" y2="270"/>
+                            <line x1="24" y1="105" x2="244" y2="105"/><line x1="24" y1="160" x2="244" y2="160"/><line x1="24" y1="215" x2="244" y2="215"/>
+                        </g>
+                        <rect x="24" y="50" width="55" height="55" fill="#3a4b63" stroke="#8fd0ff" stroke-width="2"/>
+                        <text x="134" y="290" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">the image = a grid of thread groups</text>
+
+                        <!-- zoom into one group -->
+                        <defs><marker id="za" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8fd0ff"/></marker></defs>
+                        <line x1="79" y1="77" x2="330" y2="120" stroke="#8fd0ff" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#za)"/>
+                        <rect x="330" y="70" width="180" height="180" rx="4" fill="#26302a" stroke="#4e6b52"/>
+                        <text x="420" y="64" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#9be6b0">one group = 8 × 8 threads</text>
+                        <g fill="#3f7a52" stroke="#2c5a3c">
+                            <!-- 8x8 dots -->
+                            <g>
+                                <rect x="340" y="80" width="18" height="18"/><rect x="360" y="80" width="18" height="18"/><rect x="380" y="80" width="18" height="18"/><rect x="400" y="80" width="18" height="18"/><rect x="420" y="80" width="18" height="18"/><rect x="440" y="80" width="18" height="18"/><rect x="460" y="80" width="18" height="18"/><rect x="480" y="80" width="18" height="18"/>
+                                <rect x="340" y="100" width="18" height="18"/><rect x="360" y="100" width="18" height="18"/><rect x="380" y="100" width="18" height="18"/><rect x="400" y="100" width="18" height="18"/><rect x="420" y="100" width="18" height="18"/><rect x="440" y="100" width="18" height="18"/><rect x="460" y="100" width="18" height="18"/><rect x="480" y="100" width="18" height="18"/>
+                                <rect x="340" y="120" width="18" height="18"/><rect x="360" y="120" width="18" height="18"/><rect x="380" y="120" width="18" height="18"/><rect x="400" y="120" width="18" height="18"/><rect x="420" y="120" width="18" height="18"/><rect x="440" y="120" width="18" height="18"/><rect x="460" y="120" width="18" height="18"/><rect x="480" y="120" width="18" height="18"/>
+                                <rect x="340" y="140" width="18" height="18"/><rect x="360" y="140" width="18" height="18"/><rect x="380" y="140" width="18" height="18"/><rect x="400" y="140" width="18" height="18"/><rect x="420" y="140" width="18" height="18"/><rect x="440" y="140" width="18" height="18"/><rect x="460" y="140" width="18" height="18"/><rect x="480" y="140" width="18" height="18"/>
+                            </g>
+                        </g>
+                        <text x="420" y="180" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#cfe0d6">each square = 1 thread = 1 pixel</text>
+                        <text x="420" y="210" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#8fd0ff">id = SV_DispatchThreadID</text>
+                        <text x="420" y="230" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">global (x,y) across the whole grid</text>
+
+                        <text x="700" y="150" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d4e6">Rule of thumb:</text>
+                        <text x="700" y="172" font-family="'Consolas',monospace" font-size="11" fill="#9be6b0">groups = size / numthreads</text>
+                        <text x="700" y="192" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">1024 / 8 = 128</text>
+                        <text x="700" y="222" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">Round up so you cover</text>
+                        <text x="700" y="238" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">every element.</text>
+                    </svg>
+                    <figcaption>Figure 1: A dispatch. <code>numthreads</code> sets threads-per-group; <code>Dispatch</code> sets the group count; each thread reads its global coordinate from <code>SV_DispatchThreadID</code> and processes one element.</figcaption>
+                </figure>
+            </section>
+
+            <section id="kernel" class="lesson-section">
+                <h2>Writing the Kernel</h2>
+                <p>A compute shader is a <code>.compute</code> asset (right-click ▸ <strong>Create ▸ Shader ▸ Compute Shader</strong>). Here's a complete kernel that fills a texture with an animated plasma — each thread computes one pixel's colour from its coordinates:</p>
+                <pre><code class="language-none">#pragma kernel CSMain          // declare the kernel entry point
+
+RWTexture2D&lt;float4&gt; Result;    // the texture we WRITE (RW = read/write)
+float Time;
+uint Width, Height;
+
+float3 hsv2rgb(float3 c)
+{
+    float3 p = abs(frac(c.xxx + float3(0.0, 2.0/3.0, 1.0/3.0)) * 6.0 - 3.0);
+    return c.z * lerp(float3(1,1,1), saturate(p - 1.0), c.y);
+}
+
+[numthreads(8,8,1)]            // 8×8 = 64 threads per group
+void CSMain (uint3 id : SV_DispatchThreadID)   // id = this thread's global (x,y,z)
+{
+    float2 uv = float2(id.x / (float)Width, id.y / (float)Height);
+    float2 p  = uv * 6.0 - 3.0;
+
+    // interference of several sine waves → a smooth plasma field
+    float v = sin(p.x*1.5 + Time) + sin(p.y*1.7)
+            + sin((p.x+p.y)*1.1) + sin(length(p)*2.0);
+    v += sin(p.x*0.5 + sin(p.y*0.8)*2.0);
+
+    float3 col = hsv2rgb(float3(frac(v*0.12 + 0.5), 0.8, 1.0));
+    Result[id.xy] = float4(col, 1.0);          // write this pixel
+}</code></pre>
+                <p><code>RWTexture2D</code> is a texture the shader can <em>write</em> (the <code>RW</code> prefix — an ordinary <code>Texture2D</code> is read-only). <code>SV_DispatchThreadID</code> gives each thread its unique global coordinate, so <code>id.xy</code> is exactly the pixel this invocation owns. No loop — the GPU runs a million of these at once.</p>
+            </section>
+
+            <section id="dispatch" class="lesson-section">
+                <h2>Dispatching from C#</h2>
+                <p>On the C# side you create a writable <code>RenderTexture</code>, wire up the kernel's parameters, and dispatch enough groups to cover the image:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+
+public class PlasmaCompute : MonoBehaviour
+{
+    public ComputeShader compute;    // assign the .compute asset
+    public RawImage target;          // a UI RawImage to show it (optional)
+    RenderTexture rt;
+
+    void Start()
+    {
+        int w = 1024, h = 1024;
+
+        // A RenderTexture a compute shader can write needs enableRandomWrite.
+        rt = new RenderTexture(w, h, 0) { enableRandomWrite = true };
+        rt.Create();
+
+        int kernel = compute.FindKernel("CSMain");
+        compute.SetTexture(kernel, "Result", rt);
+        compute.SetInt("Width", w);
+        compute.SetInt("Height", h);
+    }
+
+    void Update()
+    {
+        int kernel = compute.FindKernel("CSMain");
+        compute.SetFloat("Time", Time.time);
+
+        // groups = imageSize / numthreads  →  1024 / 8 = 128
+        compute.Dispatch(kernel, 1024 / 8, 1024 / 8, 1);
+
+        if (target != null) target.texture = rt;   // show the GPU result directly
+    }
+
+    void OnDestroy()
+    {
+        if (rt != null) rt.Release();   // free the GPU texture
+    }
+}</code></pre>
+                <p>Two must-dos: set <code>enableRandomWrite = true</code> on the <code>RenderTexture</code> (or the GPU can't write it), and <code>Release()</code> it when done. Notice the result never comes back to the CPU — we hand the <code>RenderTexture</code> straight to the UI, so the data stays on the GPU where it's fast. Dispatching every frame with <code>Time.time</code> animates it.</p>
+            </section>
+
+            <section id="result" class="lesson-section">
+                <h2>The Result</h2>
+                <p>Here is that exact kernel's output — a <strong>real capture</strong> of the <code>RenderTexture</code> the compute shader wrote, one thread per pixel across a million pixels:</p>
+                <figure class="render-figure">
+                    <img src="images/compute.png" alt="A smooth, colourful plasma pattern of interfering waves — blues, greens, yellows, oranges, magentas — generated entirely by a compute shader.">
+                    <figcaption>Figure 2: A genuine compute-shader output from Unity 6 — the <code>CSMain</code> kernel above, dispatched over a 1024×1024 grid. Every pixel was computed in parallel on the GPU from its own coordinates; this is the raw <code>RenderTexture</code>, saved directly.</figcaption>
+                </figure>
+                <p>This is the payoff of the whole approach: a million independent colour computations, done in a fraction of a millisecond, never touching the CPU. Swap the maths for a fluid step, a reaction-diffusion update, or a heightmap and the same structure drives real simulations.</p>
+            </section>
+
+            <section id="buffers" class="lesson-section">
+                <h2>Beyond Textures: Buffers</h2>
+                <p>Textures are ideal for image-shaped data, but compute shaders shine on <em>arbitrary</em> data too — thousands of particle positions, physics bodies, boids. For that you use a <strong><code>GraphicsBuffer</code></strong> (the modern form; <code>ComputeBuffer</code> is the older equivalent): a raw GPU array of structs your kernel reads and writes.</p>
+                <pre><code class="language-csharp">struct Particle { public Vector3 pos; public Vector3 vel; }   // must match HLSL layout
+
+// stride = bytes per element (6 floats × 4 = 24)
+var buffer = new GraphicsBuffer(GraphicsBuffer.Target.Structured, count, sizeof(float) * 6);
+buffer.SetData(particles);                    // upload
+compute.SetBuffer(kernel, "Particles", buffer);
+compute.Dispatch(kernel, Mathf.CeilToInt(count / 64f), 1, 1);
+// buffer.GetData(particles);                 // read back ONLY if you must (slow)
+buffer.Release();                              // always free it</code></pre>
+                <p>In the kernel that's a <code>RWStructuredBuffer&lt;Particle&gt; Particles;</code>. The golden rule mirrors Module 3: keep the data on the GPU. Reading a buffer back with <code>GetData</code> stalls until the GPU finishes and copies across the bus — fine occasionally, poison every frame. Best of all, a <code>GraphicsBuffer</code> of positions can be fed straight into <code>Graphics.RenderMeshIndirect</code> to draw millions of instances the CPU never even sees.</p>
+                <div class="card card-warning">
+                    <h4>⚠️ Struct layout must match</h4>
+                    <p>The C# struct and the HLSL struct must have identical field order and sizes, and the <code>stride</code> must be exact. A mismatch reads garbage — one of the classic compute-buffer bugs. Keep them side by side and count the bytes.</p>
+                </div>
+            </section>
+
+            <section id="when" class="lesson-section">
+                <h2>When to Use Compute</h2>
+                <p>Reach for a compute shader when the work is <strong>massively parallel</strong>, <strong>data-heavy</strong>, and ideally <strong>stays on the GPU</strong>:</p>
+                <ul>
+                    <li><strong>Image processing</strong> — blur, bloom, custom filters, histograms.</li>
+                    <li><strong>Particle &amp; boid systems</strong> — tens of thousands of agents updated and drawn without CPU round-trips.</li>
+                    <li><strong>Simulations</strong> — fluids, cloth, reaction-diffusion, heightfields, cellular automata.</li>
+                    <li><strong>Culling &amp; LOD</strong> — GPU-driven visibility for huge scenes (what the GPU Resident Drawer from Lesson 2.4 does under the hood).</li>
+                    <li><strong>Procedural generation</strong> — noise fields, meshes, textures built on the GPU.</li>
+                </ul>
+                <p>If the work is small, branchy, or you need the answer back on the CPU immediately, a Burst job (Module 3) is often the better tool. Compute wins when the parallelism is enormous and the result feeds straight back into rendering.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Run and remix the plasma</h3>
+                    <p><strong>Objective:</strong> Get a compute shader running and prove you understand the dispatch.</p>
+                    <ol>
+                        <li>Create the <code>CSMain</code> compute shader and the <code>PlasmaCompute</code> script; assign the asset and a UI <code>RawImage</code>; press Play.</li>
+                        <li>Change <code>[numthreads(8,8,1)]</code> to <code>[numthreads(16,16,1)]</code>. What must you change in the <code>Dispatch</code> call to still cover 1024×1024? (Hint: groups = size / numthreads.)</li>
+                        <li>Add a <code>float Scale</code> parameter and multiply <code>p</code> by it; expose a slider to zoom the plasma.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ Dispatch answer</summary>
+                        <p>With <code>numthreads(16,16,1)</code> each group covers 16 pixels per axis, so you need <code>1024 / 16 = 64</code> groups: <code>compute.Dispatch(kernel, 64, 64, 1)</code>. Dispatch the wrong count and you either miss the right/top edge (too few groups) or waste work off-image (too many).</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Compute or job?</h3>
+                    <p>For each, choose a compute shader or a Burst job: (a) blur a full-screen image every frame; (b) run pathfinding for 8 enemies and read the paths back on the CPU; (c) update 200,000 GPU particles and draw them.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>Compute</strong> — image-shaped, huge parallelism, stays on GPU for rendering. (b) <strong>Burst job</strong> — small count, branchy, and you need results on the CPU immediately. (c) <strong>Compute</strong> — massive parallelism and the positions feed straight into indirect drawing, no CPU round-trip.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> How does a compute shader differ from a fragment shader?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Compute shaders run general parallel work outside the draw pipeline, not per-pixel during rendering.">A) It runs arbitrary parallel work outside the draw pipeline, not per-pixel while drawing</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Both run on the GPU; the difference is their role.">B) It runs on the CPU instead of the GPU</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's more general, not more limited.">C) It can only output a single colour</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> With <code>[numthreads(8,8,1)]</code> and a 1024×1024 image, how many groups do you dispatch?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That would be one thread per group, far too many groups.">A) 1024 × 1024</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! groups = size / threads-per-group = 1024/8 = 128 in each axis.">B) 128 × 128</button>
+                            <button class="quiz-option" data-correct="false" data-hint="8×8 is threads per group, not the dispatch count.">C) 8 × 8</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Why avoid calling <code>GetData</code> on a buffer every frame?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! GetData stalls until the GPU finishes and copies data back over the bus — expensive per frame. Keep data on the GPU.">A) It stalls waiting for the GPU and copies data back over the bus — expensive</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It works; it's just slow — a performance concern, not correctness.">B) It corrupts the buffer</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Reading back is allowed; the issue is cost.">C) Buffers can't be read on the CPU at all</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A <strong>compute shader</strong> runs general parallel work on the GPU's thousands of cores, outside the draw pipeline.</li>
+                        <li>A <strong>kernel</strong> (<code>#pragma kernel</code>) runs across a grid: <code>[numthreads]</code> sets threads-per-group, <code>Dispatch</code> sets group count, <code>SV_DispatchThreadID</code> gives each thread its coordinate.</li>
+                        <li>Write to a <code>RWTexture2D</code> (needs <code>enableRandomWrite</code>) or a <code>GraphicsBuffer</code>/<code>ComputeBuffer</code> (matching struct layout).</li>
+                        <li>Dispatch groups = size / numthreads (rounded up); always <code>Release()</code> GPU resources.</li>
+                        <li><strong>Keep results on the GPU</strong> — feed textures/buffers straight into rendering; avoid per-frame <code>GetData</code> stalls.</li>
+                        <li>Use compute for image processing, particles, simulations, culling, and procedural generation; use Burst jobs for small, branchy, CPU-bound work.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You've now touched every rendering layer — the frame, HLSL, custom passes, and compute. In <strong>Lesson 5.5</strong> you'll combine the shader and renderer-feature skills into the module's mini-project: a complete custom full-screen post-process effect, injected into URP and rendered live.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧮 The GPU, unchained</h3>
+                    <p>One kernel, a million threads, results that never leave the GPU. Compute shaders turn the graphics card into the most parallel processor in the machine — for far more than drawing.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_23.html" class="prev-lesson">← Previous: Scriptable Renderer Features &amp; Custom Passes</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_25.html" class="next-lesson">Next: A Custom Post-Process Renderer Feature →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

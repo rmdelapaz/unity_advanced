@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Baking in ECS: author entities visually with SubScenes and GameObjects, then convert them into runtime entity data with authoring MonoBehaviours and Baker classes — including entity prefabs you instantiate at runtime.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 4.4: Baking — From GameObjects to Entities — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 4: DOTS / ECS</a></li>
+            <li aria-current="page">Lesson 4.4: Baking — From GameObjects to Entities</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🍞 Lesson 4.4: Baking — From GameObjects to Entities</h1>
+                <p class="lead">Creating entities in code is great for spawners and tests, but no designer wants to place a thousand props by typing coordinates. <strong>Baking</strong> bridges the two worlds: you author with familiar GameObjects in a SubScene, and Unity converts them into runtime entity data at build time. This lesson shows how authoring components and <code>Baker</code>s turn the Editor you know into the ECS data you need.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain <strong>why</strong> baking exists and when it runs (edit/build time, not runtime)</li>
+                        <li>Author entities in a <strong>SubScene</strong></li>
+                        <li>Write an <strong>authoring MonoBehaviour</strong> with a nested <strong><code>Baker&lt;T&gt;</code></strong></li>
+                        <li>Use <code>GetEntity(TransformUsageFlags)</code> and <code>AddComponent</code> inside <code>Bake</code></li>
+                        <li>Bake an <strong>entity prefab</strong> and instantiate it at runtime</li>
+                        <li>Understand baking <strong>dependencies</strong> so entities re-bake when the source changes</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 4.2–4.3 (components, archetypes, systems)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Baking?</a></li>
+                        <li><a href="#subscene" class="toc-link">SubScenes</a></li>
+                        <li><a href="#pipeline" class="toc-link">The Baking Pipeline</a></li>
+                        <li><a href="#baker" class="toc-link">Authoring Components &amp; Bakers</a></li>
+                        <li><a href="#transformflags" class="toc-link">TransformUsageFlags</a></li>
+                        <li><a href="#prefabs" class="toc-link">Entity Prefabs</a></li>
+                        <li><a href="#deps" class="toc-link">Baking Dependencies</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Baking?</h2>
+                <p>ECS wants tightly packed, blittable data with no <code>MonoBehaviour</code> in sight. But <em>authoring</em> a level that way by hand would be miserable — no Inspector, no drag-and-drop, no scene view. Baking resolves the tension: <strong>you design with GameObjects, and a one-time conversion turns them into entities.</strong></p>
+                <p>Crucially, baking happens <strong>at edit and build time, not at runtime</strong>. There's no per-frame or even per-load conversion cost in a shipping game — by the time the player loads a SubScene, it's already entity data streaming in from disk. Authoring convenience with zero runtime tax. It's the ECS equivalent of importing a texture: friendly source in, optimised runtime format out.</p>
+            </section>
+
+            <section id="subscene" class="lesson-section">
+                <h2>SubScenes</h2>
+                <p>Entities are authored inside a <strong>SubScene</strong> — a special scene asset nested in your main scene. Right-click in the Hierarchy ▸ <strong>New Sub Scene ▸ Empty Scene</strong>, then drag your authoring GameObjects into it. Everything inside a SubScene is <em>baked</em> into entities; everything outside it stays a normal GameObject.</p>
+                <p>SubScenes also give you streaming: their baked entity data lives in its own file and can be loaded and unloaded as a unit, which is how DOTS games stream huge worlds. For now, think of a SubScene as "the box where GameObjects become entities."</p>
+                <blockquote>
+                    <strong>💡 Closed vs open.</strong> A SubScene can be <em>closed</em> (you see the baked entities, read-only, as they'll ship) or <em>open</em> for editing (you see the authoring GameObjects and can move them). Toggle it from the SubScene's header in the Hierarchy while you work.
+                </blockquote>
+            </section>
+
+            <section id="pipeline" class="lesson-section">
+                <h2>The Baking Pipeline</h2>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 300" role="img" aria-labelledby="bakeTitle bakeDesc">
+                        <title id="bakeTitle">The baking pipeline from authoring GameObjects to runtime entities</title>
+                        <desc id="bakeDesc">Authoring GameObjects in a SubScene, each with an authoring MonoBehaviour, pass through their Baker classes at edit/build time, producing baked entities with IComponentData that stream into the runtime world. The arrow is labelled edit/build time, and the runtime world is labelled no conversion cost.</desc>
+                        <rect x="0" y="0" width="900" height="300" rx="8" fill="#22262d"/>
+
+                        <rect x="24" y="60" width="240" height="180" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="144" y="84" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">SubScene (authoring)</text>
+                        <rect x="44" y="98" width="200" height="42" rx="5" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="144" y="118" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#fff">GameObject: Enemy</text>
+                        <text x="144" y="133" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#cfe0ff">+ VelocityAuthoring (MB)</text>
+                        <rect x="44" y="150" width="200" height="42" rx="5" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="144" y="170" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#fff">GameObject: Prop</text>
+                        <text x="144" y="185" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#cfe0ff">+ SpinAuthoring (MB)</text>
+                        <text x="144" y="216" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">designer-friendly, Inspector-editable</text>
+
+                        <rect x="330" y="96" width="200" height="108" rx="8" fill="#30363f" stroke="#454d57"/>
+                        <text x="430" y="120" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ffd79a">Bakers</text>
+                        <text x="430" y="144" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#ffe6c2">Baker&lt;VelocityAuthoring&gt;</text>
+                        <text x="430" y="162" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#ffe6c2">Baker&lt;SpinAuthoring&gt;</text>
+                        <text x="430" y="184" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">Bake() emits components</text>
+
+                        <rect x="596" y="60" width="280" height="180" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="736" y="84" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#9be6b0">Runtime entities</text>
+                        <rect x="616" y="98" width="240" height="42" rx="5" fill="#26382a" stroke="#4e6b52"/>
+                        <text x="736" y="118" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#c7e6cd">Entity { LocalTransform, Velocity }</text>
+                        <text x="736" y="133" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">no MonoBehaviour, packed in chunks</text>
+                        <rect x="616" y="150" width="240" height="42" rx="5" fill="#26382a" stroke="#4e6b52"/>
+                        <text x="736" y="170" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#c7e6cd">Entity { LocalTransform, Spin }</text>
+                        <text x="736" y="185" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">streamed from disk at load</text>
+                        <text x="736" y="216" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">no runtime conversion cost</text>
+
+                        <defs><marker id="ba" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ffd79a"/></marker></defs>
+                        <line x1="264" y1="150" x2="328" y2="150" stroke="#ffd79a" stroke-width="2.4" marker-end="url(#ba)"/>
+                        <line x1="530" y1="150" x2="594" y2="150" stroke="#ffd79a" stroke-width="2.4" marker-end="url(#ba)"/>
+                        <text x="430" y="252" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#ffd79a">◄——— runs at EDIT / BUILD time ———►</text>
+                    </svg>
+                    <figcaption>Figure 1: Baking. Authoring GameObjects (each with an authoring MonoBehaviour) pass through their Bakers at edit/build time and become packed runtime entities — with no conversion cost when the player loads.</figcaption>
+                </figure>
+            </section>
+
+            <section id="baker" class="lesson-section">
+                <h2>Authoring Components &amp; Bakers</h2>
+                <p>The pattern has two parts, usually in one file. The <strong>authoring component</strong> is an ordinary <code>MonoBehaviour</code> with the fields a designer edits. The nested <strong><code>Baker&lt;T&gt;</code></strong> reads that authoring component and emits the runtime <code>IComponentData</code>:</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+using UnityEngine;
+
+// 1) The authoring component: a normal MonoBehaviour, edited in the Inspector.
+public class VelocityAuthoring : MonoBehaviour
+{
+    public Vector3 initialVelocity;
+
+    // 2) The Baker: converts this GameObject into entity data at bake time.
+    class Baker : Baker&lt;VelocityAuthoring&gt;
+    {
+        public override void Bake(VelocityAuthoring authoring)
+        {
+            // Get the entity this GameObject becomes.
+            Entity entity = GetEntity(TransformUsageFlags.Dynamic);
+
+            // Emit the runtime component from the authored value.
+            AddComponent(entity, new Velocity { Value = authoring.initialVelocity });
+        }
+    }
+}</code></pre>
+                <p>Drop <code>VelocityAuthoring</code> onto a GameObject in a SubScene, set its velocity in the Inspector, and the Baker produces an entity carrying a <code>Velocity</code> component. The designer never sees a component struct; the runtime never sees a <code>MonoBehaviour</code>. Note the <code>Bake</code> method runs in the <em>editor</em> — it can freely read the authoring object, do setup, even loop — because none of it ships.</p>
+            </section>
+
+            <section id="transformflags" class="lesson-section">
+                <h2>TransformUsageFlags</h2>
+                <p><code>GetEntity(TransformUsageFlags flags)</code> returns the entity for the baked GameObject, and the flag tells the baker <em>which transform components the entity needs</em> — an optimisation so static props don't carry movement data:</p>
+                <ul>
+                    <li><code>TransformUsageFlags.Dynamic</code> — the entity moves at runtime; give it a full <code>LocalTransform</code>. Use for anything a system repositions.</li>
+                    <li><code>TransformUsageFlags.Renderable</code> — it's drawn but never moves; it gets only what rendering needs.</li>
+                    <li><code>TransformUsageFlags.None</code> — it needs no transform at all (e.g. a pure data or singleton entity).</li>
+                </ul>
+                <p>Choosing the tightest flag keeps archetypes lean — a static rock shouldn't drag a writable <code>LocalTransform</code> through cache every frame. When in doubt for something that moves, <code>Dynamic</code> is the safe choice.</p>
+            </section>
+
+            <section id="prefabs" class="lesson-section">
+                <h2>Entity Prefabs</h2>
+                <p>Spawning at runtime needs a template — an <strong>entity prefab</strong>. You bake a GameObject prefab into an entity, store its handle in a component, and a system <code>Instantiate</code>s copies. The baker resolves a prefab reference to its baked entity with <code>GetEntity(prefab, flags)</code>:</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+using UnityEngine;
+
+public struct EnemyPrefab : IComponentData { public Entity Value; }
+
+public class SpawnerAuthoring : MonoBehaviour
+{
+    public GameObject enemyPrefab;   // a normal prefab dragged in the Inspector
+
+    class Baker : Baker&lt;SpawnerAuthoring&gt;
+    {
+        public override void Bake(SpawnerAuthoring authoring)
+        {
+            Entity entity = GetEntity(TransformUsageFlags.None);
+            AddComponent(entity, new EnemyPrefab
+            {
+                // Bake the referenced prefab into its own entity, store the handle.
+                Value = GetEntity(authoring.enemyPrefab, TransformUsageFlags.Dynamic)
+            });
+        }
+    }
+}</code></pre>
+                <p>At runtime a system reads the <code>EnemyPrefab</code> singleton and instantiates it — through an <code>EntityCommandBuffer</code>, because <code>Instantiate</code> is a structural change (Lesson 4.3):</p>
+                <pre><code class="language-csharp">var prefab = SystemAPI.GetSingleton&lt;EnemyPrefab&gt;().Value;
+var ecb = SystemAPI.GetSingleton&lt;BeginSimulationEntityCommandBufferSystem.Singleton&gt;()
+                   .CreateCommandBuffer(state.WorldUnmanaged);
+
+Entity spawned = ecb.Instantiate(prefab);
+ecb.SetComponent(spawned, LocalTransform.FromPosition(spawnPos));</code></pre>
+                <p>The instantiated entity is a full copy of the baked prefab's components — the ECS version of <code>Object.Instantiate</code>, and how the mini-project in Lesson 4.5 spawns its swarm.</p>
+            </section>
+
+            <section id="deps" class="lesson-section">
+                <h2>Baking Dependencies</h2>
+                <p>Baking is incremental — Unity re-bakes only what changed. For that to be correct, a Baker must <em>declare</em> everything it reads beyond the authoring component's own serialized fields. If your Baker reads another asset (a <code>ScriptableObject</code>, a mesh, another component), register it with <code>DependsOn</code> so a change to that asset triggers a re-bake:</p>
+                <pre><code class="language-csharp">public override void Bake(SpawnerAuthoring authoring)
+{
+    // If we read data off a referenced config asset, depend on it:
+    DependsOn(authoring.config);
+    var entity = GetEntity(TransformUsageFlags.None);
+    AddComponent(entity, new SpawnCount { Value = authoring.config.count });
+}</code></pre>
+                <p>Reading the authoring component's own fields is tracked automatically; it's <em>external</em> reads you must declare. Forget a <code>DependsOn</code> and you'll hit the classic "I changed the config but the entities didn't update until I reopened the SubScene" bug.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Bake is editor code — keep it deterministic</h4>
+                    <p>A <code>Bake</code> method must produce the same entities for the same inputs every time. Don't use randomness, <code>Time</code>, or frame state in a Baker — bake fixed data, and do any per-run randomisation in a <em>system</em> at runtime. Determinism is what lets incremental baking and version control behave.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Bake a spinning prop</h3>
+                    <p><strong>Objective:</strong> Author an entity visually and see it bake.</p>
+                    <ol>
+                        <li>Create a SubScene and add a Cube GameObject to it.</li>
+                        <li>Write a <code>SpinAuthoring : MonoBehaviour</code> with a <code>float degreesPerSecond</code> and a nested <code>Baker&lt;SpinAuthoring&gt;</code> that adds a <code>Spin</code> component (<code>RadiansPerSecond = math.radians(authoring.degreesPerSecond)</code>) using <code>GetEntity(TransformUsageFlags.Dynamic)</code>.</li>
+                        <li>Add <code>SpinAuthoring</code> to the cube, set a value, and close the SubScene.</li>
+                        <li>Open <strong>Window ▸ Entities ▸ Hierarchy</strong> and confirm the baked entity has <code>LocalTransform</code> + <code>Spin</code> — then let your <code>SpinSystem</code> from Lesson 4.3 rotate it.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>You need <code>using Unity.Mathematics;</code> for <code>math.radians</code>. If the entity doesn't appear, check the GameObject is actually <em>inside</em> the SubScene (not just the main scene) and that the SubScene is saved.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Pick the transform flag</h3>
+                    <p>Choose a <code>TransformUsageFlags</code> for each baked entity: (a) a boulder that never moves but is rendered; (b) a projectile a system flies across the level; (c) a settings entity holding only a config component and no mesh.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <code>Renderable</code> — drawn, never moved, so no writable transform churn. (b) <code>Dynamic</code> — a system repositions it every frame. (c) <code>None</code> — pure data, no transform needed at all.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> When does baking run?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Baking runs at edit/build time; the player loads already-baked entity data with no runtime conversion cost.">A) At edit/build time — the runtime loads pre-baked entities</button>
+                            <button class="quiz-option" data-correct="false" data-hint="That would reintroduce the conversion cost baking exists to remove.">B) Every frame at runtime</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's automatic on save/build, not a manual per-play step.">C) Only when you press a Bake button before each play</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What is an authoring component?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="The runtime data is the IComponentData the Baker emits, not this.">A) The runtime <code>IComponentData</code> the entity ends up with</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It's a normal MonoBehaviour a designer edits; its Baker converts it into runtime components.">B) A normal MonoBehaviour a designer edits, converted by its <code>Baker</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Systems are separate; authoring is about producing entity data.">C) A system that runs each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Your Baker reads a referenced <code>ScriptableObject</code>, but entities don't update when you edit it. What's missing?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Bakers must DependsOn external assets they read so a change triggers a re-bake.">A) A <code>DependsOn(theScriptableObject)</code> call in the Baker</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Bake must stay deterministic; time has no place in it.">B) A call to read <code>Time.time</code> in Bake</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Systems run at runtime; this is a bake-time dependency issue.">C) An extra system to copy the data</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong>Baking</strong> converts designer-friendly GameObjects into packed runtime entities — at <strong>edit/build time</strong>, with no runtime cost.</li>
+                        <li>You author inside a <strong>SubScene</strong>; everything in it is baked, everything outside stays a GameObject.</li>
+                        <li>An <strong>authoring MonoBehaviour</strong> holds the Inspector fields; its nested <strong><code>Baker&lt;T&gt;</code></strong> emits <code>IComponentData</code> in <code>Bake()</code>.</li>
+                        <li><code>GetEntity(TransformUsageFlags)</code> picks the transform data the entity needs — <code>Dynamic</code> / <code>Renderable</code> / <code>None</code>.</li>
+                        <li><strong>Entity prefabs</strong> (<code>GetEntity(prefab, flags)</code>) are instantiated at runtime via an <code>EntityCommandBuffer</code>.</li>
+                        <li>Declare external reads with <code>DependsOn</code> for correct incremental re-baking, and keep <code>Bake</code> deterministic.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have every ECS building block — components, archetypes, systems, jobs, and baking. In <strong>Lesson 4.5</strong> you'll combine them into the module's mini-project: baking a prefab, spawning thousands of entities, moving them with a parallel system, and capturing the result — the moving version of Lesson 4.1's opening render.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🍞 Author friendly, ship fast</h3>
+                    <p>Design with GameObjects, bake to entities. You keep the Editor you love and the runtime gets pure, packed data — the best of both worlds, resolved before the game ever runs.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_18.html" class="prev-lesson">← Previous: Systems &amp; Queries — ISystem &amp; SystemAPI</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_20.html" class="next-lesson">Next: Simulating Thousands of Entities →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

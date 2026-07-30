@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Meet Unity's Entity Component System (DOTS): the data-oriented model of entities, components, and systems that lets Unity 6 simulate and render tens of thousands of objects at once. The mindset shift from GameObjects to data.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 4.1: The ECS Mindset — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 4: DOTS / ECS</a></li>
+            <li aria-current="page">Lesson 4.1: The ECS Mindset</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧩 Lesson 4.1: The ECS Mindset — Entities, Components &amp; Systems</h1>
+                <p class="lead">Everything you've built so far hangs off <code>GameObject</code>s and <code>MonoBehaviour</code>s. That model is comfortable, flexible — and, past a few thousand active objects, slow. This module introduces Unity's <strong>Entity Component System</strong> (the heart of DOTS): a data-oriented way to lay out and process objects that lets Unity 6 simulate and render <em>tens of thousands</em> of them in a single frame. Before any code, you need the mental model. That's this lesson.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain the three pillars of ECS — <strong>entities</strong>, <strong>components</strong>, and <strong>systems</strong> — and how they differ from GameObjects and MonoBehaviours</li>
+                        <li>Describe <em>why</em> data-oriented design is fast: contiguous memory, cache locality, and archetypes/chunks</li>
+                        <li>Read an ECS data-flow diagram and trace what happens to entity data in one frame</li>
+                        <li>Recognise a first component and system in code</li>
+                        <li>Judge <strong>when</strong> ECS is the right tool — and when plain GameObjects still win</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Module 3 (the Job System &amp; Burst — ECS builds directly on data-oriented thinking)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#payoff" class="toc-link">The Payoff: Scale</a></li>
+                        <li><a href="#three" class="toc-link">Three Ideas: Entity, Component, System</a></li>
+                        <li><a href="#why" class="toc-link">From Objects to Data — Why It's Fast</a></li>
+                        <li><a href="#flow" class="toc-link">The ECS Data Flow</a></li>
+                        <li><a href="#code" class="toc-link">A First Taste in Code</a></li>
+                        <li><a href="#chunks" class="toc-link">Archetypes &amp; Chunks</a></li>
+                        <li><a href="#when" class="toc-link">When to Reach for ECS</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="payoff" class="lesson-section">
+                <h2>The Payoff: Scale</h2>
+                <p>Here's what we're working toward. This is a <strong>real render captured from Unity 6</strong> — thousands of entities, each with its own position and motion, simulated and drawn together. Try building this with one GameObject per cube and the editor grinds to a crawl; with ECS it runs comfortably, because the data is laid out for the machine rather than for our convenience.</p>
+
+                <figure class="render-figure">
+                    <img src="images/ecs-entities.png" alt="A large three-dimensional grid of thousands of small cubes filling the frame, each a separate entity, rendered together in a single Unity frame.">
+                    <figcaption>Figure 1: A real Unity 6 capture — <strong>25,600 individual entities</strong> rendered in a single frame via the Entities Graphics package. Each cube is a distinct entity with its own <code>LocalTransform</code> and colour component, laid out here as a wave field. Rendering tens of thousands of separate objects like this is exactly what ECS is built for; we assemble a <em>moving</em> version in the Module 4 mini-project (Lesson 4.5).</figcaption>
+                </figure>
+
+                <p>The number of objects isn't the interesting part — you could brute-force a few thousand GameObjects on a strong machine. The interesting part is <em>headroom</em>: the same scene in ECS leaves the CPU with time to spare for gameplay, physics, and AI, because iterating tightly packed data is something modern processors do extraordinarily well. This lesson explains why.</p>
+            </section>
+
+            <section id="three" class="lesson-section">
+                <h2>Three Ideas: Entity, Component, System</h2>
+                <p>ECS splits the thing a <code>MonoBehaviour</code> bundles together — identity, data, and behaviour — into three separate concepts. Learning them as distinct ideas is the whole mindset shift.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🆔 Entity</h4>
+                        <p>Just an <strong>ID</strong> — a lightweight number (an index plus a version). An entity holds <em>no</em> data and <em>no</em> code by itself. It's a handle that says "some object #1042 exists." Think of it as the <em>row key</em> in a database table.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>📦 Component</h4>
+                        <p>Pure <strong>data</strong>, and nothing else — a <code>struct</code> implementing <code>IComponentData</code>. A <code>Velocity</code>, a <code>Health</code>, a <code>LocalTransform</code>. No methods, no logic. Components are the <em>columns</em> attached to an entity's row.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>⚙️ System</h4>
+                        <p>All the <strong>behaviour</strong>. A system queries for every entity that has a certain set of components and processes them in a tight loop each frame. Systems are the <em>code</em>; they own no data of their own.</p>
+                    </div>
+                </div>
+
+                <p>Compare that to the object-oriented model you know: a <code>MonoBehaviour</code> is identity, data, <em>and</em> behaviour welded into one class, and each one lives at its own scattered spot in memory. ECS pulls those apart so that <strong>data of the same kind sits together</strong> and <strong>behaviour runs over it in bulk</strong>.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>DOTS</strong> (Data-Oriented Technology Stack) is Unity's umbrella for three cooperating packages: the <strong>Entities</strong> package (ECS), the <strong>C# Job System</strong> (safe multithreading — Module 3), and the <strong>Burst compiler</strong> (turns that job code into tight native machine code). ECS is the data model; jobs and Burst are what make iterating it fast in parallel.</p>
+                </div>
+            </section>
+
+            <section id="why" class="lesson-section">
+                <h2>From Objects to Data — Why It's Fast</h2>
+                <p>The reason ECS is fast has almost nothing to do with clever algorithms and everything to do with <strong>memory layout</strong>. Modern CPUs are starved not for compute but for data: reading a value that isn't already in the CPU cache costs hundreds of cycles while the processor waits on main memory. Performance is won by keeping the data the CPU needs next <em>right beside</em> the data it's using now.</p>
+
+                <p>GameObjects fail this test. Each one is a managed C# object allocated wherever the heap had room; its components are separate objects again, connected by references. Iterating 10,000 of them means chasing 10,000 pointers all over memory — a <strong>cache miss</strong> at nearly every step.</p>
+
+                <p>ECS stores components of the same type in <strong>contiguous arrays</strong>. Ask for every <code>Velocity</code> and you get a solid block of <code>Velocity</code> values, one after another. The CPU streams straight through it, prefetching as it goes. Same work, a fraction of the waiting.</p>
+
+                <div class="mermaid">
+flowchart TB
+    subgraph OOP["GameObject / OOP — data scattered on the heap"]
+        direction LR
+        G1["Object A<br/>pos·vel·hp"] -.pointer.-> G2["Object B<br/>pos·vel·hp"]
+        G2 -.pointer.-> G3["Object C<br/>pos·vel·hp"]
+        G3 -.pointer.-> G4["Object D<br/>pos·vel·hp"]
+    end
+    subgraph DOD["ECS / DOD — one type, one contiguous array"]
+        direction LR
+        P["pos pos pos pos pos"] --> V["vel vel vel vel vel"] --> H["hp hp hp hp hp"]
+    end
+    OOP -->|"same data,<br/>re-laid-out"| DOD
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 2: The same objects' data, re-organised. OOP scatters each object (chase a pointer, miss the cache); ECS groups each component type into a packed array the CPU can stream through.</p>
+
+                <blockquote>
+                    <strong>💡 This is data-oriented design.</strong> You met the idea in Module 3 when a job read a <code>NativeArray</code> instead of a <code>List&lt;GameObject&gt;</code>. ECS is that principle applied to your <em>entire</em> object model, with the engine managing the arrays for you.
+                </blockquote>
+            </section>
+
+            <section id="flow" class="lesson-section">
+                <h2>The ECS Data Flow</h2>
+                <p>Here is how the three pillars connect at runtime, drawn as a faithful diagram of the real flow. Follow the arrows: a <strong>system</strong> asks a <strong>query</strong> for the components it wants; the query hands back the matching entities' data as packed arrays inside <strong>chunks</strong>; the system reads and writes those arrays; and once per frame the presentation systems hand the final transforms to <strong>Entities Graphics</strong>, which draws them.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 920 560" role="img" aria-labelledby="ecsTitle ecsDesc">
+                        <title id="ecsTitle">The ECS data flow in one frame</title>
+                        <desc id="ecsDesc">A diagram of Unity's Entity Component System. On the left, a World contains a SimulationSystemGroup holding a MovementSystem. The system runs a query for entities having LocalTransform and Velocity components. The query matches an archetype chunk, shown in the centre as a table whose columns are the Entity IDs, the LocalTransform array, and the Velocity array, with rows of packed values. An arrow shows the system writing updated positions back into the LocalTransform column. On the right, a PresentationSystemGroup passes the LocalToWorld data to the Entities Graphics renderer, which outputs the rendered frame.</desc>
+
+                        <rect x="0" y="0" width="920" height="560" rx="8" fill="#22262d"/>
+
+                        <!-- ===== LEFT: World / System group ===== -->
+                        <rect x="20" y="30" width="250" height="500" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="145" y="55" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#dfe8ff">World</text>
+
+                        <rect x="36" y="72" width="218" height="300" rx="6" fill="#30363f" stroke="#454d57"/>
+                        <text x="145" y="93" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#9fb3d0">SimulationSystemGroup</text>
+
+                        <!-- MovementSystem box -->
+                        <rect x="52" y="108" width="186" height="120" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="145" y="130" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ffffff">MovementSystem</text>
+                        <text x="145" y="150" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#cfe0ff">ISystem · [BurstCompile]</text>
+                        <line x1="68" y1="162" x2="222" y2="162" stroke="#54627a" stroke-width="1"/>
+                        <text x="145" y="182" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#c9d4e6">OnUpdate() each frame:</text>
+                        <text x="145" y="202" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#9be6b0">query → read → write</text>
+
+                        <!-- Query pill -->
+                        <rect x="52" y="248" width="186" height="104" rx="6" fill="#2f3945" stroke="#45525f"/>
+                        <text x="145" y="270" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#ffd79a">EntityQuery</text>
+                        <text x="145" y="292" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#e6e6e6">match ALL of:</text>
+                        <rect x="66" y="302" width="158" height="20" rx="4" fill="#243244"/>
+                        <text x="145" y="316" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#8fd0ff">LocalTransform</text>
+                        <rect x="66" y="326" width="158" height="20" rx="4" fill="#243244"/>
+                        <text x="145" y="340" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#8fd0ff">Velocity</text>
+
+                        <!-- Legend of pillars -->
+                        <rect x="36" y="386" width="218" height="128" rx="6" fill="#30363f" stroke="#454d57"/>
+                        <text x="46" y="406" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8fd0ff">■ Entity</text>
+                        <text x="120" y="406" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#aeb8c4">= an ID</text>
+                        <text x="46" y="430" font-family="'Segoe UI',sans-serif" font-size="11" fill="#9be6b0">■ Component</text>
+                        <text x="140" y="430" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#aeb8c4">= data</text>
+                        <text x="46" y="454" font-family="'Segoe UI',sans-serif" font-size="11" fill="#ffd79a">■ System</text>
+                        <text x="128" y="454" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#aeb8c4">= behaviour</text>
+                        <text x="46" y="482" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#aeb8c4">Systems own no data;</text>
+                        <text x="46" y="499" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#aeb8c4">they run over the chunks.</text>
+
+                        <!-- arrow system group -> chunk -->
+                        <defs>
+                            <marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#eaeaea"/>
+                            </marker>
+                            <marker id="ahg" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/>
+                            </marker>
+                        </defs>
+                        <line x1="240" y1="300" x2="352" y2="300" stroke="#ffd79a" stroke-width="2.5" marker-end="url(#ah)"/>
+                        <text x="298" y="292" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#ffd79a">query</text>
+
+                        <!-- ===== CENTER: Archetype chunk ===== -->
+                        <rect x="356" y="70" width="300" height="446" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="506" y="94" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#dfe8ff">Archetype chunk</text>
+                        <text x="506" y="112" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">16 KB · entities with { LocalTransform, Velocity }</text>
+
+                        <!-- column headers -->
+                        <rect x="372" y="126" width="66" height="26" rx="4" fill="#243244"/>
+                        <text x="405" y="143" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#8fd0ff">Entity</text>
+                        <rect x="444" y="126" width="98" height="26" rx="4" fill="#26382a"/>
+                        <text x="493" y="143" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#9be6b0">LocalTransform</text>
+                        <rect x="548" y="126" width="92" height="26" rx="4" fill="#26382a"/>
+                        <text x="594" y="143" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#9be6b0">Velocity</text>
+
+                        <!-- rows -->
+                        <g font-family="'Consolas',monospace" font-size="10.5">
+                            <!-- row 1 -->
+                            <rect x="372" y="158" width="66" height="24" rx="3" fill="#31404f"/>
+                            <text x="405" y="174" text-anchor="middle" fill="#cfe0ff">#1042</text>
+                            <rect x="444" y="158" width="98" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="493" y="174" text-anchor="middle" fill="#dfe6da">(2,0,5)</text>
+                            <rect x="548" y="158" width="92" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="594" y="174" text-anchor="middle" fill="#dfe6da">(1,0,0)</text>
+                            <!-- row 2 -->
+                            <rect x="372" y="186" width="66" height="24" rx="3" fill="#31404f"/>
+                            <text x="405" y="202" text-anchor="middle" fill="#cfe0ff">#1043</text>
+                            <rect x="444" y="186" width="98" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="493" y="202" text-anchor="middle" fill="#dfe6da">(3,0,5)</text>
+                            <rect x="548" y="186" width="92" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="594" y="202" text-anchor="middle" fill="#dfe6da">(1,0,0)</text>
+                            <!-- row 3 -->
+                            <rect x="372" y="214" width="66" height="24" rx="3" fill="#31404f"/>
+                            <text x="405" y="230" text-anchor="middle" fill="#cfe0ff">#1044</text>
+                            <rect x="444" y="214" width="98" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="493" y="230" text-anchor="middle" fill="#dfe6da">(4,0,5)</text>
+                            <rect x="548" y="214" width="92" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="594" y="230" text-anchor="middle" fill="#dfe6da">(1,0,0)</text>
+                            <!-- ellipsis -->
+                            <text x="405" y="256" text-anchor="middle" fill="#7f8b99">⋮</text>
+                            <text x="493" y="256" text-anchor="middle" fill="#7f8b99">⋮</text>
+                            <text x="594" y="256" text-anchor="middle" fill="#7f8b99">⋮</text>
+                            <!-- row n -->
+                            <rect x="372" y="266" width="66" height="24" rx="3" fill="#31404f"/>
+                            <text x="405" y="282" text-anchor="middle" fill="#cfe0ff">#3079</text>
+                            <rect x="444" y="266" width="98" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="493" y="282" text-anchor="middle" fill="#dfe6da">(9,0,5)</text>
+                            <rect x="548" y="266" width="92" height="24" rx="3" fill="#2c3b30"/>
+                            <text x="594" y="282" text-anchor="middle" fill="#dfe6da">(1,0,0)</text>
+                        </g>
+
+                        <text x="506" y="316" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8f9aa8">each column is one packed, contiguous array</text>
+
+                        <!-- write-back arrow (loops within center) -->
+                        <path d="M493 296 C 430 340, 430 360, 493 360" fill="none" stroke="#9be6b0" stroke-width="2.2" marker-end="url(#ahg)"/>
+                        <text x="506" y="386" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9be6b0">system writes new positions back → LocalTransform</text>
+
+                        <!-- formula -->
+                        <rect x="376" y="402" width="260" height="98" rx="6" fill="#30363f" stroke="#454d57"/>
+                        <text x="506" y="424" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#c9d4e6">what the system does per row</text>
+                        <text x="506" y="452" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">position += velocity * dt</text>
+                        <text x="506" y="478" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">one straight pass through the arrays</text>
+
+                        <!-- arrow chunk -> presentation -->
+                        <line x1="658" y1="200" x2="700" y2="200" stroke="#eaeaea" stroke-width="2.5" marker-end="url(#ah)"/>
+
+                        <!-- ===== RIGHT: Presentation + render ===== -->
+                        <rect x="704" y="70" width="196" height="446" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="802" y="94" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">Presentation</text>
+                        <text x="802" y="112" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">PresentationSystemGroup</text>
+
+                        <rect x="720" y="128" width="164" height="70" rx="6" fill="#2f3945" stroke="#45525f"/>
+                        <text x="802" y="152" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#c9d4e6">LocalToWorld</text>
+                        <text x="802" y="172" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">matrices per entity</text>
+                        <text x="802" y="188" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">computed from transforms</text>
+
+                        <line x1="802" y1="200" x2="802" y2="224" stroke="#eaeaea" stroke-width="2.5" marker-end="url(#ah)"/>
+
+                        <rect x="720" y="226" width="164" height="64" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="802" y="250" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#ffffff">Entities Graphics</text>
+                        <text x="802" y="270" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#cfe0ff">batches + GPU instancing</text>
+
+                        <line x1="802" y1="292" x2="802" y2="316" stroke="#eaeaea" stroke-width="2.5" marker-end="url(#ah)"/>
+
+                        <!-- mini rendered frame -->
+                        <rect x="720" y="318" width="164" height="180" rx="6" fill="#14304a"/>
+                        <g fill="#7fc4ff">
+                            <rect x="736" y="336" width="10" height="10"/><rect x="756" y="332" width="10" height="10"/><rect x="776" y="338" width="10" height="10"/><rect x="796" y="330" width="10" height="10"/><rect x="816" y="340" width="10" height="10"/><rect x="836" y="334" width="10" height="10"/><rect x="856" y="342" width="10" height="10"/>
+                            <rect x="740" y="360" width="10" height="10"/><rect x="762" y="356" width="10" height="10"/><rect x="784" y="362" width="10" height="10"/><rect x="806" y="354" width="10" height="10"/><rect x="828" y="364" width="10" height="10"/><rect x="850" y="358" width="10" height="10"/>
+                            <rect x="734" y="386" width="10" height="10"/><rect x="756" y="382" width="10" height="10"/><rect x="778" y="388" width="10" height="10"/><rect x="800" y="380" width="10" height="10"/><rect x="822" y="390" width="10" height="10"/><rect x="844" y="384" width="10" height="10"/><rect x="862" y="392" width="10" height="10"/>
+                            <rect x="742" y="412" width="10" height="10"/><rect x="764" y="408" width="10" height="10"/><rect x="786" y="414" width="10" height="10"/><rect x="808" y="406" width="10" height="10"/><rect x="830" y="416" width="10" height="10"/><rect x="852" y="410" width="10" height="10"/>
+                            <rect x="736" y="438" width="10" height="10"/><rect x="758" y="434" width="10" height="10"/><rect x="780" y="440" width="10" height="10"/><rect x="802" y="432" width="10" height="10"/><rect x="824" y="442" width="10" height="10"/><rect x="846" y="436" width="10" height="10"/><rect x="866" y="444" width="10" height="10"/>
+                            <rect x="744" y="464" width="10" height="10"/><rect x="766" y="460" width="10" height="10"/><rect x="788" y="466" width="10" height="10"/><rect x="810" y="458" width="10" height="10"/><rect x="832" y="468" width="10" height="10"/><rect x="854" y="462" width="10" height="10"/>
+                        </g>
+                        <text x="802" y="492" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#bcd4ee">rendered frame</text>
+                    </svg>
+                    <figcaption>Figure 3: One frame of ECS (reconstructed diagram). A <strong style="color:#ffd79a">system</strong> runs an <strong style="color:#ffd79a">EntityQuery</strong>; the query returns matching entities as packed <strong style="color:#9be6b0">component</strong> arrays inside an archetype <strong>chunk</strong>; the system streams through them writing new positions; then the presentation group feeds <code>LocalToWorld</code> matrices to Entities Graphics for drawing. This is the flow behind Figure 1.</figcaption>
+                </figure>
+
+                <blockquote>
+                    <strong>💡 Why a diagram and not a screenshot?</strong> ECS has no single "window" to photograph — its state lives in memory, and the Entities Hierarchy/Inspector are UI Toolkit panels that can't be captured cleanly. So the flow is drawn precisely from the real API, while the <em>result</em> (Figure 1) is a genuine Unity capture. That split — real renders for on-screen results, faithful diagrams for tools and data flow — runs through this whole course.
+                </blockquote>
+            </section>
+
+            <section id="code" class="lesson-section">
+                <h2>A First Taste in Code</h2>
+                <p>You'll write these properly in the next three lessons; for now just read them and match each to a pillar. First, a <strong>component</strong> — a data-only <code>struct</code>:</p>
+                <pre><code class="language-csharp">using Unity.Entities;
+using Unity.Mathematics;
+
+// A COMPONENT: pure data, no methods, no MonoBehaviour.
+// float3 is Unity.Mathematics' Burst-friendly vector type.
+public struct Velocity : IComponentData
+{
+    public float3 Value;
+}</code></pre>
+
+                <p>Next, a <strong>system</strong> — the behaviour. It queries every entity that has both a <code>LocalTransform</code> (ECS's transform component) and our <code>Velocity</code>, then advances each position. Note there's no list of objects and no <code>GetComponent</code>: the query <em>is</em> the selection.</p>
+                <pre><code class="language-csharp">using Unity.Burst;
+using Unity.Entities;
+using Unity.Transforms;
+
+[BurstCompile]
+public partial struct MovementSystem : ISystem
+{
+    [BurstCompile]
+    public void OnUpdate(ref SystemState state)
+    {
+        float dt = SystemAPI.Time.DeltaTime;
+
+        // Iterate every entity matching { LocalTransform, Velocity }.
+        // RefRW = read/write access, RefRO = read-only.
+        foreach (var (transform, velocity) in
+                 SystemAPI.Query&lt;RefRW&lt;LocalTransform&gt;, RefRO&lt;Velocity&gt;&gt;())
+        {
+            transform.ValueRW.Position += velocity.ValueRO.Value * dt;
+        }
+    }
+}</code></pre>
+
+                <p>That <code>foreach</code> is the whole idea in miniature: one system, one query, a straight pass over packed data. There's no <code>Update()</code> on ten thousand components each doing their own thing — there's one loop over ten thousand rows. In Lesson 4.3 we'll turn this loop into a parallel Burst job and watch it scale to the scene in Figure 1.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ <code>partial</code> is not optional</h4>
+                    <p>ECS systems and jobs are declared <code>partial</code> because Unity's <strong>source generators</strong> write the other half at compile time — the boilerplate that turns <code>SystemAPI.Query&lt;…&gt;()</code> into real chunk iteration. Forget <code>partial</code> and you'll get a wall of confusing errors. It's the number-one beginner ECS mistake.</p>
+                </div>
+            </section>
+
+            <section id="chunks" class="lesson-section">
+                <h2>Archetypes &amp; Chunks</h2>
+                <p>One more idea makes the whole model click — and it's the key to <em>why</em> those arrays are contiguous. An entity's <strong>archetype</strong> is the exact <em>set</em> of component types it has. An entity with <code>{ LocalTransform, Velocity }</code> has a different archetype from one with <code>{ LocalTransform, Velocity, Health }</code>.</p>
+                <p>Unity groups every entity of the same archetype together into <strong>chunks</strong> — 16&nbsp;KB blocks of memory. Within a chunk, each component type is stored as its own tightly packed array (that's the table in Figure 3). When a system queries for <code>{ LocalTransform, Velocity }</code>, Unity simply hands it the matching chunks and it walks their arrays end to end. No searching, no pointer-chasing.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Adding or removing a component is a "structural change"</h4>
+                    <p>Because the archetype defines where an entity lives, adding or removing a component <em>moves</em> the entity into a different chunk — a <strong>structural change</strong>. It's not free, and it can't happen safely in the middle of a job. That's why ECS code batches such changes (often through an <code>EntityCommandBuffer</code>). We'll cover the pattern in Lesson 4.3; for now just know that <em>changing what components an entity has</em> is a heavier operation than <em>changing the values inside</em> them.</p>
+                </div>
+
+                <div class="card card-success">
+                    <h4>✅ The mental model in one line</h4>
+                    <p><strong>Entities</strong> are rows, <strong>components</strong> are columns, an <strong>archetype</strong> is a table schema, a <strong>chunk</strong> is a page of that table, and a <strong>system</strong> is a query that runs a tight loop over the matching pages every frame.</p>
+                </div>
+            </section>
+
+            <section id="when" class="lesson-section">
+                <h2>When to Reach for ECS</h2>
+                <p>ECS is powerful, but it is not a replacement for GameObjects in every project — and being honest about that is part of using it well.</p>
+                <h3>✅ ECS shines when…</h3>
+                <ul>
+                    <li>You have <strong>many similar things</strong> — thousands of projectiles, units, particles, boids, agents, or grid cells — doing the same work.</li>
+                    <li>Simulation cost dominates and you need it <strong>multithreaded and Burst-compiled</strong> to hit frame budget.</li>
+                    <li>The data and behaviour are <strong>uniform</strong> enough to express as components and systems.</li>
+                </ul>
+                <h3>🚫 Plain GameObjects still win when…</h3>
+                <ul>
+                    <li>You have a <strong>handful of complex, unique objects</strong> — the player, a boss, a UI screen — where flexibility beats raw throughput.</li>
+                    <li>You lean on subsystems that are still GameObject-first in your setup (much UI, some physics and animation workflows).</li>
+                    <li>The team's productivity matters more than the last millisecond — ECS has a real learning curve and stricter code.</li>
+                </ul>
+                <p>Real projects are often <strong>hybrid</strong>: GameObjects for the bespoke, high-touch objects, and ECS for the massive, uniform swarms. You don't have to convert your whole game to benefit — you can drop ECS into the one system that needs the scale.</p>
+
+                <blockquote>
+                    <strong>🔎 Prerequisite check.</strong> ECS leans hard on Module 3. Components use <code>Unity.Mathematics</code> types like <code>float3</code>; systems become <strong>jobs</strong> compiled by <strong>Burst</strong> to go parallel. If jobs and <code>NativeArray</code> still feel shaky, revisit Lessons 3.2–3.4 before Lesson 4.3.
+                </blockquote>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Model it as data (no code yet)</h3>
+                    <p><strong>Objective:</strong> Practise the mindset shift on paper before the tooling.</p>
+                    <p>Take a classic <em>asteroids</em> field: dozens of asteroids drifting and rotating, plus the player's ship. Describe it the ECS way:</p>
+                    <ol>
+                        <li>List the <strong>components</strong> (data) an asteroid needs. (Hint: where is it? how fast/which way is it moving? how fast does it spin? how big is it?)</li>
+                        <li>Name the <strong>systems</strong> (behaviour) that would run over those components each frame.</li>
+                        <li>Which entities share an <strong>archetype</strong>? Would the player ship share the asteroids' archetype — why or why not?</li>
+                    </ol>
+                    <details>
+                        <summary>✅ A reasonable answer</summary>
+                        <p><strong>Components:</strong> <code>LocalTransform</code> (position/rotation/scale), <code>Velocity</code>, <code>AngularVelocity</code> (spin), maybe <code>AsteroidSize</code>. <strong>Systems:</strong> a <code>MovementSystem</code> (position += velocity·dt), a <code>SpinSystem</code> (rotate by angular velocity·dt), a <code>WrapAroundSystem</code> (teleport when off-screen). <strong>Archetypes:</strong> all asteroids with the same component set share one archetype and pack into the same chunks; the ship, which also has <code>PlayerInput</code> and a <code>Health</code> component the asteroids lack, has a <em>different</em> archetype and lives in its own chunk — even though it too moves.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Spot the pillar</h3>
+                    <p>For each item, say whether it's an <strong>Entity</strong>, a <strong>Component</strong>, or a <strong>System</strong>: (a) <code>struct Health : IComponentData { public int Value; }</code>; (b) the loop <code>position += velocity * dt</code> running over every matching row; (c) the ID <code>#4021</code> that ties one object's data together.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>Component</strong> — a data-only struct. (b) <strong>System</strong> — behaviour over a query. (c) <strong>Entity</strong> — just an ID.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> In ECS, what is an <em>entity</em>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="That describes a component — pure data.">A) A struct that holds an object's data</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! An entity is just a lightweight ID (index + version). Its data lives in components; its behaviour in systems.">B) A lightweight ID with no data or behaviour of its own</button>
+                            <button class="quiz-option" data-correct="false" data-hint="That's a system — behaviour that runs over a query.">C) The code that updates objects each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Why does storing components in contiguous arrays make ECS fast?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Threads help, but that's the Job System's contribution — this question is about memory.">A) It uses more CPU threads automatically</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Packed data streams through the CPU cache with far fewer cache misses than chasing scattered object references.">B) The CPU can stream packed data through its cache instead of chasing scattered pointers</button>
+                            <button class="quiz-option" data-correct="false" data-hint="ECS doesn't skip work; it lays the same work out for the hardware.">C) It skips updating most objects each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> Two entities have <code>{ LocalTransform, Velocity }</code>; a third has <code>{ LocalTransform, Velocity, Health }</code>. What's true?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The archetype is the exact set of component types, so the third entity has a different archetype and lives in a different chunk.">A) The third entity has a different archetype and is stored in a different chunk</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Archetype = the exact component set; adding Health changes it.">B) All three share one archetype because they all have a transform</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Entities with no components are unusual; these all have components.">C) None of them has an archetype until a system runs</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Your <code>MovementSystem : ISystem</code> won't compile — a flood of source-generator errors. What's the most likely cause?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Burst affects performance/codegen, not this class-shape error.">A) You forgot <code>[BurstCompile]</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! ECS systems must be declared partial so the source generator can emit the other half of the class.">B) The system isn't declared <code>partial</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Systems don't need a MonoBehaviour; that's the GameObject world.">C) It's missing a <code>MonoBehaviour</code> base class</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>ECS splits the <code>MonoBehaviour</code> bundle into three: <strong>entities</strong> (IDs), <strong>components</strong> (data structs), and <strong>systems</strong> (behaviour over queries).</li>
+                        <li>Its speed comes from <strong>memory layout</strong>: components of one type are packed into contiguous arrays the CPU can stream through, avoiding cache misses.</li>
+                        <li>An <strong>archetype</strong> is an entity's exact set of components; entities of one archetype are stored together in 16&nbsp;KB <strong>chunks</strong>.</li>
+                        <li>A <strong>system</strong> runs an <strong>EntityQuery</strong> each frame and loops over the matching chunks — no <code>GetComponent</code>, no per-object <code>Update()</code>.</li>
+                        <li>Systems and jobs must be <code>partial</code> so source generators can complete them.</li>
+                        <li>Reach for ECS for <strong>many uniform objects</strong> that need scale; keep GameObjects for a few complex, bespoke ones. Hybrid is normal.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Now that the model makes sense, we build it. In <strong>Lesson 4.2: Components &amp; Archetypes</strong> you'll install the Entities package, define real <code>IComponentData</code> structs, create entities in code, and watch the archetype/chunk system organise them — the concrete foundation under Figure 3.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧠 You've made the shift</h3>
+                    <p>Rows, columns, tables, and a query that runs a tight loop over packed data — that's ECS. Hold onto that picture; every DOTS lesson from here builds on it.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_15.html" class="prev-lesson">← Previous: A Burst-Compiled Parallel Field Simulation</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_17.html" class="next-lesson">Next: Components &amp; Archetypes →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

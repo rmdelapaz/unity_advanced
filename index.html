@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Unity Advanced — the third course after Unity Fundamentals and Unity Intermediate. Go deep into professional Unity 6 engineering: advanced architecture and async, performance and the Profiler, the Job System and Burst, DOTS/ECS, HLSL and custom render passes, compute shaders, multiplayer netcode, editor tooling, Addressables, testing, CI and shipping.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Unity Advanced — Engineer Like a Pro in Unity 6</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+</head>
+<body>
+    <!-- Skip to main content for accessibility -->
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+
+    <!-- Navigation -->
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">
+                ☰
+            </button>
+            <div class="nav-links" id="nav-links">
+                <a href="#introduction">Introduction</a>
+                <a href="#modules">Modules</a>
+                <a href="#prerequisites">Prerequisites</a>
+                <a href="#resources">Resources</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Breadcrumb -->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li aria-current="page">Home</li>
+        </ul>
+    </nav>
+
+    <!-- Main Content -->
+    <main id="main-content">
+        <div class="container">
+            <!-- Hero Section -->
+            <header>
+                <h1>🎮 Unity Advanced</h1>
+                <p class="lead">You can build a game. Now build like an engineer. This is the third course after <strong>Unity Fundamentals</strong> and <strong>Unity Intermediate</strong> — 38 focused, deep lessons across 8 modules that take you into the professional stack: scalable architecture, performance engineering, the Job System, DOTS/ECS, HLSL and custom render passes, compute shaders, multiplayer netcode, editor tooling, and a real testing-to-shipping pipeline. Every module ends in its own mini-project.</p>
+            </header>
+
+            <!-- Introduction Section -->
+            <section id="introduction" class="card">
+                <h2>📚 About This Course</h2>
+                <p>Intermediate made you fluent in Unity's systems. Advanced makes you an <em>engineer</em>. This course is deliberately <strong>focused and deep</strong> rather than broad — it picks the topics that separate a competent Unity developer from a professional one and treats each with the depth it deserves. Expect real C#, real HLSL, real profiler traces, and a hard look at how Unity actually runs your game frame by frame.</p>
+                <p>We assume you finished <strong>Unity Intermediate</strong> (or have equivalent experience): you're comfortable with the Animator, the new Input System, ScriptableObject architecture, Shader Graph, NavMesh, and basic profiling. Those are the floor here, not the ceiling — we reference them and move on.</p>
+                <p>The eight modules cluster into four advanced pillars. <strong>Performance &amp; DOTS</strong> is the largest — three modules covering profiling, the Job System and Burst, and the full Entity Component System — because data-oriented design is where modern Unity performance lives. Then a <strong>Rendering</strong> pillar (HLSL, Scriptable Renderer Features, compute shaders), a <strong>Netcode</strong> pillar (multiplayer with Netcode for GameObjects), and a <strong>Tooling &amp; Pipeline</strong> pillar (editor tools, Addressables, testing, CI, and shipping).</p>
+
+                <div class="card card-info">
+                    <h4>🧪 A word on honesty: renders vs. diagrams</h4>
+                    <p>Where a topic has a real visual payoff — thousands of entities simulating at once, a custom shader or compute effect on screen — you'll see a <strong>genuine render captured from Unity 6</strong>. Where the "result" is a tool window that can't be screenshotted cleanly — the Profiler, the Memory Profiler, ECS system flow, network topology, custom EditorWindows — it's drawn as a <strong>faithful, labelled diagram reconstructed from the real thing</strong>. Much of advanced engineering is code, data flow, and measurement, so this course leans on precise diagrams and real code more than on pretty screenshots, and it tells you which is which.</p>
+                </div>
+
+                <h3>What You'll Learn</h3>
+                <ul>
+                    <li>Structure a large codebase with assembly definitions, dependency injection, and patterns that scale</li>
+                    <li>Control asynchrony with coroutines, <code>async</code>/<code>await</code>, and Unity 6's <code>Awaitable</code></li>
+                    <li>Drive the Profiler and Memory Profiler to find real bottlenecks, and write garbage-free code</li>
+                    <li>Understand how URP batches draw calls — SRP Batcher, GPU Instancing, and the GPU Resident Drawer</li>
+                    <li>Think in data and schedule safe multithreaded work with the C# Job System and Burst</li>
+                    <li>Build data-oriented simulations with DOTS/ECS — entities, components, systems, queries, and baking</li>
+                    <li>Write HLSL shaders, inject custom render passes with Scriptable Renderer Features, and run compute shaders</li>
+                    <li>Build multiplayer with Netcode for GameObjects — ownership, NetworkVariables, and RPCs</li>
+                    <li>Extend the Editor with custom inspectors and UI Toolkit windows, and manage content with Addressables</li>
+                    <li>Test with the Unity Test Framework, automate builds with CI, and ship a real release</li>
+                </ul>
+
+                <h3>Who This Course Is For</h3>
+                <ul>
+                    <li>Graduates of Unity Intermediate (or equivalent) ready to work the way studios do</li>
+                    <li>Developers comfortable in C# who want to understand what happens <em>under</em> the API</li>
+                    <li>Anyone hitting a performance wall who needs jobs, Burst, or DOTS to break through</li>
+                    <li>Programmers moving toward rendering, multiplayer, or tools/pipeline specializations</li>
+                </ul>
+
+                <div class="card card-accent">
+                    <h4>🎓 Not there yet?</h4>
+                    <p>If any of the prerequisites feel shaky, take <a href="https://rays-home.netlify.app/">Unity Intermediate</a> (and Fundamentals before it) first. This course picks up exactly where Intermediate leaves off and assumes that groundwork throughout.</p>
+                </div>
+            </section>
+
+            <!-- Course Modules/Lessons -->
+            <section id="modules">
+                <h2>📖 Course Modules</h2>
+                <p>38 lessons across 8 modules, grouped into four pillars. The order below is the recommended path — Module 1 is the foundation the rest build on — but the Rendering, Netcode, and Tooling pillars can be taken in the order your work demands.</p>
+
+                <!-- Module 1 -->
+                <div class="card lesson-card">
+                    <h3>Module 1: Advanced Architecture &amp; Async <span class="badge">Foundation</span></h3>
+                    <p>Structure a large project and take control of time — assembly definitions, dependency injection, async/await with <code>Awaitable</code>, and design patterns that hold up at scale.</p>
+                    <ul>
+                        <li><a href="lesson_01.html" class="lesson-link">Lesson 1.1: Assembly Definitions &amp; Structuring a Large Project</a></li>
+                        <li><a href="lesson_02.html" class="lesson-link">Lesson 1.2: Dependency Injection &amp; Inversion of Control</a></li>
+                        <li><a href="lesson_03.html" class="lesson-link">Lesson 1.3: Async &amp; Await in Unity 6 — Awaitable</a></li>
+                        <li><a href="lesson_04.html" class="lesson-link">Lesson 1.4: Scaling Design Patterns — Command, State, Service Locator &amp; Event Bus</a></li>
+                        <li><a href="lesson_05.html" class="lesson-link">Lesson 1.5: A Game Bootstrapper with a Service Container (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 2 -->
+                <div class="card lesson-card">
+                    <h3>Module 2: Performance Engineering <span class="badge">Performance Track</span></h3>
+                    <p>Measure before you optimize. The Profiler and Memory Profiler in depth, garbage-free C#, and how modern URP batches your draw calls.</p>
+                    <ul>
+                        <li><a href="lesson_06.html" class="lesson-link">Lesson 2.1: The Profiler in Depth</a></li>
+                        <li><a href="lesson_07.html" class="lesson-link">Lesson 2.2: Hunting Memory — The Memory Profiler</a></li>
+                        <li><a href="lesson_08.html" class="lesson-link">Lesson 2.3: Writing Garbage-Free Code</a></li>
+                        <li><a href="lesson_09.html" class="lesson-link">Lesson 2.4: Draw Calls &amp; Batching — SRP Batcher, GPU Instancing &amp; the GPU Resident Drawer</a></li>
+                        <li><a href="lesson_10.html" class="lesson-link">Lesson 2.5: Profiling &amp; Fixing a Stress Scene (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 3 -->
+                <div class="card lesson-card">
+                    <h3>Module 3: The Job System &amp; Burst <span class="badge">Performance Track</span></h3>
+                    <p>Think in data, not objects. Schedule safe multithreaded work with the C# Job System and NativeContainers, then compile it to blazing native code with Burst.</p>
+                    <ul>
+                        <li><a href="lesson_11.html" class="lesson-link">Lesson 3.1: Data-Oriented Thinking</a></li>
+                        <li><a href="lesson_12.html" class="lesson-link">Lesson 3.2: Your First Job — IJob &amp; Scheduling</a></li>
+                        <li><a href="lesson_13.html" class="lesson-link">Lesson 3.3: NativeContainers &amp; the Safety System</a></li>
+                        <li><a href="lesson_14.html" class="lesson-link">Lesson 3.4: Parallel Jobs &amp; Burst Compilation</a></li>
+                        <li><a href="lesson_15.html" class="lesson-link">Lesson 3.5: A Burst-Compiled Parallel Field Simulation (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 4 -->
+                <div class="card lesson-card">
+                    <h3>Module 4: DOTS / ECS <span class="badge">Performance Track</span></h3>
+                    <p>The Entity Component System — Unity's data-oriented stack for simulating vast numbers of objects. Entities, components, systems, queries, and baking authoring GameObjects into entities.</p>
+                    <ul>
+                        <li><a href="lesson_16.html" class="lesson-link">Lesson 4.1: The ECS Mindset — Entities, Components &amp; Systems</a></li>
+                        <li><a href="lesson_17.html" class="lesson-link">Lesson 4.2: Components &amp; Archetypes</a></li>
+                        <li><a href="lesson_18.html" class="lesson-link">Lesson 4.3: Systems &amp; Queries — ISystem &amp; SystemAPI</a></li>
+                        <li><a href="lesson_19.html" class="lesson-link">Lesson 4.4: Baking — From GameObjects to Entities</a></li>
+                        <li><a href="lesson_20.html" class="lesson-link">Lesson 4.5: Simulating Thousands of Entities (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 5 -->
+                <div class="card lesson-card">
+                    <h3>Module 5: Advanced Rendering <span class="badge">Rendering Track</span></h3>
+                    <p>Go beyond Shader Graph. Read the frame, write real HLSL, inject custom passes with Scriptable Renderer Features, and run general-purpose GPU work with compute shaders.</p>
+                    <ul>
+                        <li><a href="lesson_21.html" class="lesson-link">Lesson 5.1: The URP Frame &amp; the Frame Debugger</a></li>
+                        <li><a href="lesson_22.html" class="lesson-link">Lesson 5.2: Writing Shaders in HLSL</a></li>
+                        <li><a href="lesson_23.html" class="lesson-link">Lesson 5.3: Scriptable Renderer Features &amp; Custom Passes</a></li>
+                        <li><a href="lesson_24.html" class="lesson-link">Lesson 5.4: Compute Shaders — General-Purpose GPU Work</a></li>
+                        <li><a href="lesson_25.html" class="lesson-link">Lesson 5.5: A Custom Post-Process Renderer Feature (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 6 -->
+                <div class="card lesson-card">
+                    <h3>Module 6: Multiplayer — Netcode for GameObjects <span class="badge">Netcode Track</span></h3>
+                    <p>Build networked games with Unity's official Netcode for GameObjects: the client/server model, spawning and ownership, synchronized NetworkVariables, and RPCs.</p>
+                    <ul>
+                        <li><a href="lesson_26.html" class="lesson-link">Lesson 6.1: Networking Foundations — Client/Server &amp; Topologies</a></li>
+                        <li><a href="lesson_27.html" class="lesson-link">Lesson 6.2: NetworkObjects, Spawning &amp; Ownership</a></li>
+                        <li><a href="lesson_28.html" class="lesson-link">Lesson 6.3: NetworkVariables &amp; State Synchronization</a></li>
+                        <li><a href="lesson_29.html" class="lesson-link">Lesson 6.4: RPCs — Remote Procedure Calls</a></li>
+                        <li><a href="lesson_30.html" class="lesson-link">Lesson 6.5: A Small Authoritative Multiplayer Prototype (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 7 -->
+                <div class="card lesson-card">
+                    <h3>Module 7: Editor Tooling &amp; Addressables <span class="badge">Tooling Track</span></h3>
+                    <p>Bend the Editor to your workflow with custom inspectors and UI Toolkit EditorWindows, then manage content asynchronously at scale with the Addressables system.</p>
+                    <ul>
+                        <li><a href="lesson_31.html" class="lesson-link">Lesson 7.1: Custom Inspectors &amp; Property Drawers</a></li>
+                        <li><a href="lesson_32.html" class="lesson-link">Lesson 7.2: EditorWindows with UI Toolkit</a></li>
+                        <li><a href="lesson_33.html" class="lesson-link">Lesson 7.3: Addressables — Async Content Management</a></li>
+                        <li><a href="lesson_34.html" class="lesson-link">Lesson 7.4: A Level-Layout Tool with Addressable Loading (Mini-Project)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Module 8 -->
+                <div class="card lesson-card">
+                    <h3>Module 8: Testing, CI &amp; Shipping <span class="badge">Tooling Track</span></h3>
+                    <p>Ship with confidence: automated tests with the Unity Test Framework, continuous integration and cloud builds, live-ops, and a final tested, CI-built release — plus where to go next.</p>
+                    <ul>
+                        <li><a href="lesson_35.html" class="lesson-link">Lesson 8.1: The Unity Test Framework — Edit &amp; Play Mode Tests</a></li>
+                        <li><a href="lesson_36.html" class="lesson-link">Lesson 8.2: Automated &amp; Cloud Builds (CI/CD)</a></li>
+                        <li><a href="lesson_37.html" class="lesson-link">Lesson 8.3: Live-Ops — Analytics, Remote Config &amp; Crash Reporting</a></li>
+                        <li><a href="lesson_38.html" class="lesson-link">Lesson 8.4: A Tested, CI-Built Release — and Where to Go Next (Mini-Project)</a></li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- Prerequisites Section -->
+            <section id="prerequisites" class="card">
+                <h2>✅ Prerequisites</h2>
+                <p>This is an advanced course. To get the most from it you should already be comfortable with everything in <a href="https://rays-home.netlify.app/">Unity Intermediate</a>:</p>
+                <ul>
+                    <li>Animation state machines — the Animator, transitions, and blend trees</li>
+                    <li>The <strong>new Input System</strong> — Action Maps and device-agnostic bindings</li>
+                    <li>Decoupled architecture with interfaces, C# events, and <strong>ScriptableObjects</strong></li>
+                    <li>Authoring materials with <strong>Shader Graph</strong> and lighting a scene in URP</li>
+                    <li>AI navigation with the <strong>NavMesh</strong></li>
+                    <li>Basic profiling and object pooling</li>
+                    <li>Confident C# — classes, interfaces, generics, delegates/events, and <code>async</code> basics</li>
+                </ul>
+                <p>You do <em>not</em> need prior experience with DOTS, HLSL, multithreading, or networking — those are what this course teaches. But you should be able to read and write intermediate C# without a reference open at all times.</p>
+
+                <h3>Software</h3>
+                <ul>
+                    <li><strong>Unity 6 (6000.5 LTS)</strong> with the <strong>Universal Render Pipeline (URP)</strong></li>
+                    <li><strong>Visual Studio</strong> or <strong>VS Code / Rider</strong> for C#</li>
+                    <li>Packages installed as needed (we walk through each): <strong>Burst</strong>, <strong>Collections</strong>, <strong>Entities</strong> &amp; <strong>Entities Graphics</strong>, <strong>Netcode for GameObjects</strong>, <strong>Addressables</strong>, <strong>Memory Profiler</strong>, and the <strong>Test Framework</strong></li>
+                    <li>Git, for the CI/CD module</li>
+                </ul>
+            </section>
+
+            <!-- Resources Section -->
+            <section id="resources" class="card">
+                <h2>📚 Additional Resources</h2>
+
+                <h3>Official Unity Resources</h3>
+                <ul>
+                    <li><a href="https://docs.unity3d.com/Manual/index.html" target="_blank" rel="noopener">Unity Manual</a></li>
+                    <li><a href="https://docs.unity3d.com/ScriptReference/" target="_blank" rel="noopener">Unity Scripting API Reference</a></li>
+                    <li><a href="https://docs.unity3d.com/Packages/com.unity.entities@latest" target="_blank" rel="noopener">Entities (DOTS) Package Documentation</a></li>
+                    <li><a href="https://docs.unity3d.com/Packages/com.unity.burst@latest" target="_blank" rel="noopener">Burst Compiler Documentation</a></li>
+                    <li><a href="https://docs.unity3d.com/Packages/com.unity.netcode.gameobjects@latest" target="_blank" rel="noopener">Netcode for GameObjects Documentation</a></li>
+                    <li><a href="https://docs.unity3d.com/Packages/com.unity.addressables@latest" target="_blank" rel="noopener">Addressables Documentation</a></li>
+                </ul>
+
+                <h3>Community &amp; Help</h3>
+                <ul>
+                    <li><a href="https://discussions.unity.com/" target="_blank" rel="noopener">Unity Discussions (official forum)</a></li>
+                    <li><a href="https://learn.microsoft.com/en-us/dotnet/csharp/" target="_blank" rel="noopener">Microsoft C# Documentation</a></li>
+                </ul>
+            </section>
+
+            <!-- Search Section -->
+            <section class="card">
+                <h2>🔍 Search Course Content</h2>
+                <div style="position: relative;">
+                    <input type="text" id="search-input" placeholder="Search lessons, topics, or keywords..."
+                           aria-label="Search course content">
+                    <div id="search-results" style="display: none; position: absolute; top: 100%; left: 0; right: 0;"></div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <!-- JavaScript -->
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

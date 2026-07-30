@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Replace Unity's default Inspector with your own. Write a custom Editor with [CustomEditor] and OnInspectorGUI, drive changes through SerializedObject/SerializedProperty for free undo, multi-object edit and prefab overrides, and build a reusable [CustomPropertyDrawer] for a custom PropertyAttribute.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 7.1: Custom Inspectors &amp; Property Drawers — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 7: Editor Tooling &amp; Addressables</a></li>
+            <li aria-current="page">Lesson 7.1: Custom Inspectors &amp; Property Drawers</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🛠️ Lesson 7.1: Custom Inspectors &amp; Property Drawers</h1>
+                <p class="lead">Unity's default Inspector is a workhorse: point it at any component and it draws a field for every serialized value. But a workhorse is not a craftsman's tool. When a designer keeps entering an invalid range, when two related fields should sit side by side, or when a "Bake" button would save an hour of manual work, you stop bending your workflow to the Inspector and start bending the Inspector to your workflow. This lesson shows you the two levers: a <strong>custom Editor</strong> that redraws a whole component, and a <strong>custom Property Drawer</strong> that redraws one field everywhere it appears.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain <em>why</em> teams customize the Inspector — validation, workflow buttons, clarity, and safety</li>
+                        <li>Write a <code>[CustomEditor(typeof(X))]</code> class that overrides <code>OnInspectorGUI</code></li>
+                        <li>Use <code>SerializedObject</code> / <code>SerializedProperty</code> instead of touching the target directly — and say what you get for free by doing so</li>
+                        <li>Lay out fields, help boxes, and buttons with <code>EditorGUILayout</code></li>
+                        <li>Build a reusable <code>[CustomPropertyDrawer]</code> for your own <code>PropertyAttribute</code></li>
+                        <li>Place all of this in an <strong>Editor</strong> assembly so it never ships in your build</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 65 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 1.1 (assembly definitions) — Editor code must live in an Editor asmdef</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Customize the Inspector</a></li>
+                        <li><a href="#editor" class="toc-link">Your First Custom Editor</a></li>
+                        <li><a href="#serialized" class="toc-link">SerializedObject &amp; SerializedProperty</a></li>
+                        <li><a href="#layout" class="toc-link">Drawing with EditorGUILayout</a></li>
+                        <li><a href="#drawers" class="toc-link">Property Drawers &amp; Custom Attributes</a></li>
+                        <li><a href="#asmdef" class="toc-link">Where Editor Code Must Live</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Customize the Inspector</h2>
+                <p>The default Inspector is <em>reflection over your fields</em>: Unity walks every serialized member and draws a matching control. That is a fine default and, for most components, all you need. You reach past it when the default draws the data correctly but presents the <em>work</em> badly. Four recurring motivations cover almost every real case:</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>✅ Validation</h4>
+                        <p>Catch bad data at edit time — a negative radius, a missing prefab reference, a spawn count above the pool size — and show a warning in the Inspector instead of a crash at runtime.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>⚡ Workflow buttons</h4>
+                        <p>Add a <strong>Bake</strong>, <strong>Regenerate</strong>, or <strong>Reset to Defaults</strong> button that runs an editor action right where the data lives, instead of hunting through menus.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>👁️ Clarity</h4>
+                        <p>Group related fields, hide irrelevant ones based on a mode, add headers and help boxes, and turn a wall of floats into something a designer can actually read.</p>
+                    </div>
+                </div>
+
+                <p>None of these change what your component <em>is</em> — the serialized data is identical. They change how a human interacts with it. That distinction matters, because a custom Inspector that quietly corrupts undo history or breaks multi-object editing is worse than no custom Inspector at all. The trick, as we'll see, is to redraw the interface while letting Unity keep owning the data.</p>
+
+                <blockquote>
+                    <strong>💬 A note on the two UI systems.</strong> Custom Editors can be built with the classic <strong>IMGUI</strong> API (<code>OnInspectorGUI</code>, <code>EditorGUILayout</code>) or the newer <strong>UI Toolkit</strong> (<code>CreateInspectorGUI</code>, returning a <code>VisualElement</code>). This lesson teaches IMGUI because it is the most direct, most documented path and reads top-to-bottom like the code it is. You'll meet UI Toolkit properly in the next lesson when we build a full EditorWindow with it.
+                </blockquote>
+            </section>
+
+            <section id="editor" class="lesson-section">
+                <h2>Your First Custom Editor</h2>
+                <p>Suppose we have a simple spawner component. Nothing exotic — a prefab, a count, a radius:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+
+// This is a normal runtime MonoBehaviour. It lives in a runtime assembly.
+public class EnemySpawner : MonoBehaviour
+{
+    public GameObject enemyPrefab;
+    public int count = 10;
+    public float radius = 5f;
+}</code></pre>
+
+                <p>To take over its Inspector, we write a separate <strong>Editor</strong> class, tag it with <code>[CustomEditor(typeof(EnemySpawner))]</code>, and override <code>OnInspectorGUI</code>. Unity calls that method every time it needs to draw the Inspector for a selected <code>EnemySpawner</code>:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEditor;   // the whole Editor API lives here
+
+[CustomEditor(typeof(EnemySpawner))]
+public class EnemySpawnerEditor : Editor
+{
+    public override void OnInspectorGUI()
+    {
+        // 'target' is the EnemySpawner being inspected (typed as Object).
+        var spawner = (EnemySpawner)target;
+
+        // Draw a heading, then the default fields for now.
+        EditorGUILayout.LabelField("Enemy Spawner", EditorStyles.boldLabel);
+        DrawDefaultInspector();   // Unity's reflection-based drawing
+
+        if (spawner.count &gt; 100)
+            EditorGUILayout.HelpBox("That's a lot of enemies — check your pool size.",
+                                    MessageType.Warning);
+
+        if (GUILayout.Button("Preview Spawn Points"))
+            Debug.Log($"Would spawn {spawner.count} enemies within {spawner.radius}m.");
+    }
+}</code></pre>
+
+                <p>That is a complete, working custom Inspector. <code>DrawDefaultInspector()</code> keeps the normal fields, and we bolt on a warning and a button. Notice the shape of the class: it derives from <code>Editor</code> (not <code>MonoBehaviour</code>), it has a <code>target</code> reference to the object being inspected, and the <code>[CustomEditor]</code> attribute wires the two together. This is enough for buttons and read-only feedback — but the moment you want to <em>write</em> to fields, reading <code>target</code> directly is the wrong move. Here's why.</p>
+            </section>
+
+            <section id="serialized" class="lesson-section">
+                <h2>SerializedObject &amp; SerializedProperty</h2>
+                <p>If you set <code>spawner.count = 5</code> directly inside <code>OnInspectorGUI</code>, three things silently break: the change won't register with <strong>Undo</strong>, it won't mark the scene or prefab <strong>dirty</strong> (so it may not save), and it won't behave correctly when <strong>multiple objects</strong> are selected or when the value is a <strong>prefab override</strong>. Unity's Inspector never edits objects directly — it edits them through a <code>SerializedObject</code> wrapper, and you should too.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p>A <strong><code>SerializedObject</code></strong> is Unity's editable, undo-aware view of one or more objects' serialized data. A <strong><code>SerializedProperty</code></strong> is a handle to one field inside it (found by its C# field name). Editing through them gives you <strong>Undo/Redo</strong>, <strong>dirty-flagging</strong>, <strong>multi-object editing</strong>, and correct <strong>prefab-override</strong> bolding — all for free.</p>
+                </div>
+
+                <p>The pattern is always the same three-step ritual, and the SVG below shows what it protects you from. Read the property at the start of the frame, draw fields bound to properties, then write the buffer back at the end:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEditor;
+
+[CustomEditor(typeof(EnemySpawner))]
+[CanEditMultipleObjects]                       // enable multi-select editing
+public class EnemySpawnerEditor : Editor
+{
+    SerializedProperty prefabProp;
+    SerializedProperty countProp;
+    SerializedProperty radiusProp;
+
+    void OnEnable()
+    {
+        // Cache the property handles once, by field name.
+        prefabProp = serializedObject.FindProperty("enemyPrefab");
+        countProp  = serializedObject.FindProperty("count");
+        radiusProp = serializedObject.FindProperty("radius");
+    }
+
+    public override void OnInspectorGUI()
+    {
+        serializedObject.Update();             // 1. pull current values into the buffer
+
+        EditorGUILayout.PropertyField(prefabProp);
+        EditorGUILayout.PropertyField(countProp);
+        EditorGUILayout.PropertyField(radiusProp);
+
+        if (countProp.intValue &gt; 100)
+            EditorGUILayout.HelpBox("That's a lot of enemies.", MessageType.Warning);
+
+        serializedObject.ApplyModifiedProperties(); // 3. write buffer back (records Undo)
+    }
+}</code></pre>
+
+                <p><code>serializedObject</code> is a property Unity gives every <code>Editor</code>. <code>PropertyField</code> draws the right control for whatever type the property is — an object field for the prefab, an int field for the count — and because it is bound to a <code>SerializedProperty</code>, all the machinery just works. <code>ApplyModifiedProperties()</code> is what records the Undo step and marks things dirty; forget it and your edits appear to work but never persist.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 360" role="img" aria-labelledby="soTitle soDesc">
+                        <title id="soTitle">Editing through SerializedObject versus editing the target directly</title>
+                        <desc id="soDesc">Two horizontal paths. The top path, editing target.count directly, leads to a dead end marked "no Undo, no dirty flag, breaks multi-select and prefab overrides." The bottom path goes from the Inspector field through serializedObject.Update, PropertyField bound to a SerializedProperty, and ApplyModifiedProperties, then into a box labelled "Undo recorded, scene marked dirty, multi-object and prefab overrides handled." Both paths end at the same stored data.</desc>
+                        <rect x="0" y="0" width="900" height="360" rx="8" fill="#22262d"/>
+
+                        <!-- TOP: direct path -->
+                        <text x="30" y="46" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ff9a9a">✗ Editing the target directly</text>
+                        <rect x="30" y="60" width="180" height="52" rx="6" fill="#3a2b2f" stroke="#7a4a4a"/>
+                        <text x="120" y="82" text-anchor="middle" font-family="'Consolas',monospace" font-size="11.5" fill="#ffd0d0">spawner.count = 5;</text>
+                        <text x="120" y="100" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#d8a8a8">writes the object</text>
+                        <line x1="214" y1="86" x2="286" y2="86" stroke="#ff9a9a" stroke-width="2.5" marker-end="url(#ah31)"/>
+                        <rect x="290" y="56" width="330" height="60" rx="6" fill="#30363f" stroke="#7a4a4a"/>
+                        <text x="455" y="80" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#ff9a9a">no Undo · no dirty flag · breaks multi-select</text>
+                        <text x="455" y="100" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#ff9a9a">breaks prefab overrides — edits may not even save</text>
+
+                        <!-- BOTTOM: serialized path -->
+                        <text x="30" y="176" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#9be6b0">✓ Editing through SerializedObject</text>
+
+                        <rect x="30" y="192" width="140" height="52" rx="6" fill="#2f3945" stroke="#45525f"/>
+                        <text x="100" y="214" text-anchor="middle" font-family="'Consolas',monospace" font-size="11" fill="#8fd0ff">.Update()</text>
+                        <text x="100" y="232" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#9aa6b4">read into buffer</text>
+
+                        <line x1="174" y1="218" x2="212" y2="218" stroke="#eaeaea" stroke-width="2.2" marker-end="url(#ah31)"/>
+
+                        <rect x="216" y="192" width="160" height="52" rx="6" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="296" y="212" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#ffffff">PropertyField</text>
+                        <text x="296" y="230" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#cfe0ff">bound to property</text>
+
+                        <line x1="380" y1="218" x2="418" y2="218" stroke="#eaeaea" stroke-width="2.2" marker-end="url(#ah31)"/>
+
+                        <rect x="422" y="192" width="200" height="52" rx="6" fill="#2f3945" stroke="#45525f"/>
+                        <text x="522" y="214" text-anchor="middle" font-family="'Consolas',monospace" font-size="10" fill="#8fd0ff">.ApplyModifiedProperties()</text>
+                        <text x="522" y="232" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#9aa6b4">write buffer back</text>
+
+                        <line x1="626" y1="218" x2="664" y2="218" stroke="#9be6b0" stroke-width="2.5" marker-end="url(#ahg31)"/>
+
+                        <rect x="668" y="180" width="212" height="76" rx="6" fill="#26382a" stroke="#4a7a58"/>
+                        <text x="774" y="204" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#9be6b0">Undo recorded</text>
+                        <text x="774" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#9be6b0">scene marked dirty</text>
+                        <text x="774" y="240" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#9be6b0">multi-object + prefab safe</text>
+
+                        <!-- shared data -->
+                        <rect x="290" y="292" width="330" height="46" rx="6" fill="#30363f" stroke="#454d57"/>
+                        <text x="455" y="320" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11.5" fill="#c9d4e6">the same serialized field on disk</text>
+                        <line x1="455" y1="116" x2="455" y2="290" stroke="#7a4a4a" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#ah31)"/>
+                        <line x1="774" y1="256" x2="620" y2="300" stroke="#4a7a58" stroke-width="1.6" stroke-dasharray="4 4" marker-end="url(#ahg31)"/>
+
+                        <defs>
+                            <marker id="ah31" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#eaeaea"/></marker>
+                            <marker id="ahg31" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker>
+                        </defs>
+                    </svg>
+                    <figcaption>Figure 1: Two ways to change a field. Writing <code>target</code> directly skips Unity's editing pipeline; going through <code>serializedObject</code> earns Undo, dirty-flagging, multi-object editing, and prefab-override handling automatically.</figcaption>
+                </figure>
+
+                <div class="card card-warning">
+                    <h4>⚠️ The three lines that must bracket every edit</h4>
+                    <p>Almost every broken custom Inspector traces to a missing <code>serializedObject.Update()</code> at the top or a missing <code>serializedObject.ApplyModifiedProperties()</code> at the bottom. Update pulls fresh values in; Apply pushes edits out and records Undo. Treat them as the opening and closing brackets of <code>OnInspectorGUI</code> and you'll rarely be surprised.</p>
+                </div>
+            </section>
+
+            <section id="layout" class="lesson-section">
+                <h2>Drawing with EditorGUILayout</h2>
+                <p><code>EditorGUILayout</code> is the toolbox of Inspector controls, laid out automatically top to bottom so you never compute rectangles by hand. You saw <code>PropertyField</code>, <code>LabelField</code>, and <code>HelpBox</code> already; a handful more cover the vast majority of custom Inspectors. Here is a richer <code>OnInspectorGUI</code> that groups fields, reacts to a mode, and detects changes:</p>
+                <pre><code class="language-csharp">public override void OnInspectorGUI()
+{
+    serializedObject.Update();
+
+    // A bold section header.
+    EditorGUILayout.LabelField("Spawn Settings", EditorStyles.boldLabel);
+
+    // Indent a group of related fields.
+    EditorGUI.indentLevel++;
+    EditorGUILayout.PropertyField(prefabProp, new GUIContent("Enemy Prefab"));
+    EditorGUILayout.PropertyField(countProp,  new GUIContent("Spawn Count"));
+    EditorGUILayout.PropertyField(radiusProp, new GUIContent("Radius (m)"));
+    EditorGUI.indentLevel--;
+
+    // Put two controls on one horizontal line.
+    EditorGUILayout.BeginHorizontal();
+    if (GUILayout.Button("Reset")) countProp.intValue = 10;
+    if (GUILayout.Button("Double")) countProp.intValue *= 2;
+    EditorGUILayout.EndHorizontal();
+
+    // Detect whether the user changed anything in a block.
+    EditorGUI.BeginChangeCheck();
+    EditorGUILayout.PropertyField(radiusProp);
+    if (EditorGUI.EndChangeCheck())
+        Debug.Log("Radius edited — you could revalidate here.");
+
+    serializedObject.ApplyModifiedProperties();
+}</code></pre>
+
+                <p>Every one of these is composable: <code>BeginHorizontal</code>/<code>EndHorizontal</code> and <code>indentLevel</code> nest, <code>BeginChangeCheck</code>/<code>EndChangeCheck</code> brackets any block you care about, and <code>EditorStyles</code> gives you the editor's own fonts and colors so your additions look native. Because the method runs every repaint, you can branch on the current data — hide a field when a bool is off, swap a slider for a plain field — and the Inspector reshapes itself live.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Prefer PropertyField over typed getters where you can</h4>
+                    <p>You <em>can</em> read <code>countProp.intValue</code> and draw an <code>EditorGUILayout.IntField</code> yourself, and sometimes you must. But <code>PropertyField</code> already knows the field's type, tooltip, range attributes, and prefab-override state. Reach for the typed accessors (<code>.intValue</code>, <code>.floatValue</code>, <code>.objectReferenceValue</code>) only when you need the raw value for logic — not as your default way to draw.</p>
+                </div>
+            </section>
+
+            <section id="drawers" class="lesson-section">
+                <h2>Property Drawers &amp; Custom Attributes</h2>
+                <p>A custom Editor customizes <em>one component type</em>. A <strong>Property Drawer</strong> customizes <em>one field type or one attribute</em> — everywhere it appears, in every Inspector, automatically. This is how Unity's own <code>[Range]</code>, <code>[Header]</code>, and <code>[Tooltip]</code> work, and you can add your own. It's the more reusable of the two tools: write it once, decorate any field, done.</p>
+
+                <p>The pattern has two halves. First, a small <code>PropertyAttribute</code> — a marker with no logic — that you can stick on fields:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+
+// A marker attribute. Note: this is RUNTIME code (it decorates runtime fields),
+// so it lives in a normal assembly, not the Editor one.
+public class RequiredAttribute : PropertyAttribute { }</code></pre>
+
+                <p>Then a <code>[CustomPropertyDrawer]</code> that knows how to draw any field wearing that attribute. Property drawers use the rect-based API (<code>EditorGUI</code>, not <code>EditorGUILayout</code>) because Unity hands them a fixed <code>position</code> rectangle to paint into:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEditor;
+
+[CustomPropertyDrawer(typeof(RequiredAttribute))]
+public class RequiredDrawer : PropertyDrawer
+{
+    public override void OnGUI(Rect position, SerializedProperty property, GUIContent label)
+    {
+        // Draw the normal field first.
+        EditorGUI.PropertyField(position, property, label);
+
+        // If it's an empty object reference, tint it and warn.
+        bool missing = property.propertyType == SerializedPropertyType.ObjectReference
+                       &amp;&amp; property.objectReferenceValue == null;
+        if (missing)
+        {
+            var warnRect = new Rect(position.x, position.yMax, position.width, 16f);
+            EditorGUI.LabelField(warnRect, " ⚠ This reference is required.");
+        }
+    }
+
+    // Reserve extra vertical space when we draw the warning line.
+    public override float GetPropertyHeight(SerializedProperty property, GUIContent label)
+    {
+        bool missing = property.propertyType == SerializedPropertyType.ObjectReference
+                       &amp;&amp; property.objectReferenceValue == null;
+        return EditorGUIUtility.singleLineHeight + (missing ? 18f : 0f);
+    }
+}</code></pre>
+
+                <p>Now <em>any</em> field in <em>any</em> component can opt in: <code>[Required] public GameObject enemyPrefab;</code> and it grows a warning line whenever it's empty — no per-component Editor needed. The SVG below shows the reconstructed result: a custom Inspector combining bold headers, labelled fields, a <code>[Required]</code> warning, a help box, and an action button.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 720 460" role="img" aria-labelledby="inspTitle inspDesc">
+                        <title id="inspTitle">A reconstructed custom Inspector for the EnemySpawner</title>
+                        <desc id="inspDesc">A mock of a Unity Inspector panel. It shows a bold header "Enemy Spawner", then three labelled fields: Enemy Prefab (an object field that is empty and shows a warning "This reference is required"), Spawn Count with the value 150, and Radius with the value 5. Below is a yellow help box reading "That's a lot of enemies — check your pool size." At the bottom is a full-width button labelled "Preview Spawn Points."</desc>
+                        <rect x="0" y="0" width="720" height="460" rx="8" fill="#3b3f45"/>
+
+                        <!-- Inspector panel -->
+                        <rect x="24" y="24" width="672" height="412" rx="6" fill="#33373d" stroke="#22252a"/>
+
+                        <!-- component header bar -->
+                        <rect x="24" y="24" width="672" height="40" rx="6" fill="#2a2d33"/>
+                        <rect x="40" y="36" width="16" height="16" rx="3" fill="#7f8a99"/>
+                        <text x="66" y="49" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#e6e6e6">Enemy Spawner (Script)</text>
+                        <text x="670" y="49" text-anchor="end" font-family="'Segoe UI',sans-serif" font-size="14" fill="#8a94a2">⋮</text>
+
+                        <!-- bold section header -->
+                        <text x="44" y="98" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#dfe8ff">Spawn Settings</text>
+
+                        <!-- field: Enemy Prefab (empty -> warning) -->
+                        <text x="56" y="130" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d1db">Enemy Prefab</text>
+                        <rect x="250" y="118" width="420" height="20" rx="3" fill="#26292e" stroke="#4a4f57"/>
+                        <text x="262" y="132" font-family="'Segoe UI',sans-serif" font-size="11" fill="#7f8791">None (Game Object)</text>
+                        <circle cx="656" cy="128" r="6" fill="#26292e" stroke="#565c65"/>
+                        <text x="656" y="132" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#9aa4b0">◎</text>
+                        <text x="252" y="156" font-family="'Segoe UI',sans-serif" font-size="11" fill="#ffcf6b">⚠ This reference is required.</text>
+
+                        <!-- field: Spawn Count -->
+                        <text x="56" y="188" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d1db">Spawn Count</text>
+                        <rect x="250" y="176" width="420" height="20" rx="3" fill="#26292e" stroke="#4a4f57"/>
+                        <text x="262" y="190" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">150</text>
+
+                        <!-- field: Radius -->
+                        <text x="56" y="222" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d1db">Radius (m)</text>
+                        <rect x="250" y="210" width="420" height="20" rx="3" fill="#26292e" stroke="#4a4f57"/>
+                        <text x="262" y="224" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">5</text>
+
+                        <!-- help box -->
+                        <rect x="44" y="252" width="632" height="52" rx="5" fill="#4a4327" stroke="#8a7a3a"/>
+                        <text x="66" y="274" font-family="'Segoe UI',sans-serif" font-size="15" fill="#ffcf6b">⚠</text>
+                        <text x="90" y="273" font-family="'Segoe UI',sans-serif" font-size="12" fill="#f0e4bf">That's a lot of enemies —</text>
+                        <text x="90" y="291" font-family="'Segoe UI',sans-serif" font-size="12" fill="#f0e4bf">check your pool size.</text>
+
+                        <!-- horizontal button row -->
+                        <rect x="44" y="322" width="308" height="30" rx="5" fill="#4a5160" stroke="#6b7382"/>
+                        <text x="198" y="342" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#e6e6e6">Reset</text>
+                        <rect x="368" y="322" width="308" height="30" rx="5" fill="#4a5160" stroke="#6b7382"/>
+                        <text x="522" y="342" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#e6e6e6">Double</text>
+
+                        <!-- action button -->
+                        <rect x="44" y="368" width="632" height="34" rx="5" fill="#3a5f8a" stroke="#5b86bd"/>
+                        <text x="360" y="390" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#ffffff">Preview Spawn Points</text>
+                    </svg>
+                    <figcaption>Figure 2: A reconstructed custom Inspector (UI Toolkit Inspectors can't be screenshotted cleanly, so this is drawn from the code above). Bold header, labelled fields, a <code>[Required]</code> drawer flagging the empty prefab, a <code>HelpBox</code>, a horizontal button row, and a full-width action button — all produced by <code>EditorGUILayout</code> plus one <code>PropertyDrawer</code>.</figcaption>
+                </figure>
+
+                <blockquote>
+                    <strong>💡 Editor vs. Property Drawer, in one sentence.</strong> Use a <strong>custom Editor</strong> when you want to restructure a whole component's Inspector (headers, buttons, conditional layout); use a <strong>Property Drawer</strong> when you want one field or one attribute to look and behave the same wherever it shows up.
+                </blockquote>
+            </section>
+
+            <section id="asmdef" class="lesson-section">
+                <h2>Where Editor Code Must Live</h2>
+                <p>Everything in the <code>UnityEditor</code> namespace exists <strong>only in the Editor</strong> — it is stripped from player builds. If a <code>using UnityEditor;</code> ends up compiled into a runtime assembly, your game won't build. Back in Lesson 1.1 you learned to carve a project into assemblies with <code>.asmdef</code> files; Editor code is the textbook case for that discipline.</p>
+
+                <p>There are two ways to keep Editor code out of your build, and Unity honors both:</p>
+                <ul>
+                    <li><strong>A folder named <code>Editor</code>.</strong> Any script under a folder literally called <code>Editor</code> is compiled into the special Editor-only assembly. Simple, and enough for small projects.</li>
+                    <li><strong>An Editor <code>.asmdef</code>.</strong> In a properly modularized project, you make a dedicated assembly definition with its <strong>Platforms</strong> set to <em>Editor</em> only, and have it reference your runtime assembly. Your custom <code>Editor</code> and <code>PropertyDrawer</code> classes go there.</li>
+                </ul>
+
+                <div class="card card-warning">
+                    <h4>⚠️ The attribute goes with the runtime field, the drawer goes with the Editor</h4>
+                    <p>This trips people up: your <code>RequiredAttribute : PropertyAttribute</code> is <em>runtime</em> code — it decorates runtime fields, so it must live in a runtime assembly. But the <code>RequiredDrawer : PropertyDrawer</code> is <em>Editor</em> code (it uses <code>EditorGUI</code>), so it must live in the Editor assembly. Split them across the boundary or your build breaks. The custom <code>Editor</code> class is likewise always Editor-only.</p>
+                </div>
+
+                <p>This is exactly the layering from Lesson 1.1 paying off: a clean runtime assembly that ships, and a separate Editor assembly full of tools that never leaves your machine. As your tooling grows in the next three lessons — an EditorWindow, an Addressables-aware level tool — it all lands on this same Editor side of the line.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: A validated custom Editor</h3>
+                    <p><strong>Objective:</strong> Take over the Inspector for a component and validate it safely.</p>
+                    <p>Write a <code>WaveConfig</code> MonoBehaviour with <code>int waveCount</code>, <code>float spawnInterval</code>, and <code>GameObject[] enemyPrefabs</code>. Then write a custom Editor that:</p>
+                    <ol>
+                        <li>Draws all three fields through <code>SerializedProperty</code> (with the <code>Update</code>/<code>Apply</code> brackets).</li>
+                        <li>Shows a <code>HelpBox</code> error when <code>spawnInterval &lt;= 0</code> or the prefab array is empty.</li>
+                        <li>Adds a "Sort Prefabs by Name" button that reorders the array (through the serialized property) and records Undo.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Cache your properties in <code>OnEnable</code>. For the array, <code>serializedObject.FindProperty("enemyPrefabs")</code> gives a property with <code>.arraySize</code> and <code>.GetArrayElementAtIndex(i)</code>. Because you edit through the serialized property and call <code>ApplyModifiedProperties()</code>, Undo is automatic — you don't call <code>Undo.RecordObject</code> yourself.</p>
+                    </details>
+                    <details>
+                        <summary>✅ Solution sketch</summary>
+                        <pre><code class="language-csharp">[CustomEditor(typeof(WaveConfig))]
+public class WaveConfigEditor : Editor
+{
+    SerializedProperty waveCount, spawnInterval, prefabs;
+
+    void OnEnable()
+    {
+        waveCount     = serializedObject.FindProperty("waveCount");
+        spawnInterval = serializedObject.FindProperty("spawnInterval");
+        prefabs       = serializedObject.FindProperty("enemyPrefabs");
+    }
+
+    public override void OnInspectorGUI()
+    {
+        serializedObject.Update();
+
+        EditorGUILayout.PropertyField(waveCount);
+        EditorGUILayout.PropertyField(spawnInterval);
+        EditorGUILayout.PropertyField(prefabs, true); // true = draw children
+
+        if (spawnInterval.floatValue &lt;= 0f)
+            EditorGUILayout.HelpBox("Spawn interval must be positive.", MessageType.Error);
+        if (prefabs.arraySize == 0)
+            EditorGUILayout.HelpBox("Add at least one enemy prefab.", MessageType.Error);
+
+        if (GUILayout.Button("Sort Prefabs by Name"))
+        {
+            // Simple insertion sort over the serialized array elements' names.
+            for (int i = 1; i &lt; prefabs.arraySize; i++)
+                for (int j = i; j &gt; 0; j--)
+                {
+                    var a = prefabs.GetArrayElementAtIndex(j - 1).objectReferenceValue;
+                    var b = prefabs.GetArrayElementAtIndex(j).objectReferenceValue;
+                    if (a != null &amp;&amp; b != null &amp;&amp;
+                        string.CompareOrdinal(a.name, b.name) &gt; 0)
+                        prefabs.MoveArrayElement(j, j - 1);
+                }
+        }
+
+        serializedObject.ApplyModifiedProperties(); // records the sort as one Undo step
+    }
+}</code></pre>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: A reusable [MinValue] drawer</h3>
+                    <p><strong>Objective:</strong> Write a property drawer once and reuse it on any numeric field.</p>
+                    <p>Create a <code>MinValueAttribute : PropertyAttribute</code> that stores a <code>float min</code> in its constructor, and a matching <code>[CustomPropertyDrawer(typeof(MinValueAttribute))]</code> that clamps the field's value to at least <code>min</code>. Decorate a field with <code>[MinValue(0f)] public float radius;</code> and confirm you can't drag it negative.</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>The attribute stores the bound: <code>public class MinValueAttribute : PropertyAttribute { public float min; public MinValueAttribute(float min){ this.min = min; } }</code>. In the drawer's <code>OnGUI</code>, cast <code>attribute</code> to <code>MinValueAttribute</code> to read <code>min</code>, draw the field with <code>EditorGUI.PropertyField</code>, then clamp: <code>if (property.propertyType == SerializedPropertyType.Float &amp;&amp; property.floatValue &lt; min) property.floatValue = min;</code>. Because a drawer edits the <code>SerializedProperty</code> it's handed, the clamp participates in Undo automatically — no <code>serializedObject</code> plumbing needed inside the drawer.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why edit a field through <code>SerializedProperty</code> instead of writing <code>target.count = 5</code> directly?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Direct writes are actually faster; that's not the reason.">A) It's faster than assigning the field directly</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The serialized pipeline gives you Undo/Redo, dirty-flagging, multi-object editing, and prefab-override handling for free.">B) It gives you Undo, dirty-flagging, multi-object editing, and prefab overrides automatically</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Both approaches change the same field; serialization isn't about permission.">C) Direct writes are blocked by Unity at compile time</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> You edit properties in <code>OnInspectorGUI</code> but the changes never persist. What did you most likely forget?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="DrawDefaultInspector draws fields; it isn't what saves your edits.">A) A call to <code>DrawDefaultInspector()</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! serializedObject.ApplyModifiedProperties() at the end writes the buffer back and records the Undo step. Without it, edits appear then vanish.">B) <code>serializedObject.ApplyModifiedProperties()</code> at the end</button>
+                            <button class="quiz-option" data-correct="false" data-hint="[BurstCompile] has nothing to do with Editor code.">C) A <code>[BurstCompile]</code> attribute on the Editor</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> You want a <code>[Required]</code> marker that flags any empty reference field <em>in every Inspector</em>. Which tool fits?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="A custom Editor only affects one component type — you'd have to repeat it everywhere.">A) A separate custom <code>Editor</code> on every component</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A PropertyAttribute plus a [CustomPropertyDrawer] applies to any field wearing the attribute, in every Inspector, automatically.">B) A <code>PropertyAttribute</code> plus a <code>[CustomPropertyDrawer]</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="DrawDefaultInspector just reproduces the default; it adds no behaviour.">C) Calling <code>DrawDefaultInspector()</code> harder</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Your project fails to build with an error about the <code>UnityEditor</code> namespace. What's the likely cause?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="The attribute is runtime code and is fine in a runtime assembly.">A) Your <code>PropertyAttribute</code> is in a runtime assembly</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Editor code (using UnityEditor) is stripped from builds; it must live in an Editor folder or an Editor-only asmdef. Compiling it into a runtime assembly breaks the build.">B) Editor code ended up in a runtime assembly instead of an Editor folder/asmdef</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Custom Editors never derive from MonoBehaviour — they derive from Editor.">C) Your custom Editor doesn't derive from <code>MonoBehaviour</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Customize the Inspector for <strong>validation</strong>, <strong>workflow buttons</strong>, and <strong>clarity</strong> — you change the interface, not the data.</li>
+                        <li>A <strong>custom Editor</strong> is a class deriving from <code>Editor</code>, tagged <code>[CustomEditor(typeof(X))]</code>, overriding <code>OnInspectorGUI</code>.</li>
+                        <li>Always edit through <code>serializedObject</code>: <code>Update()</code> at the top, <code>PropertyField</code>s in the middle, <code>ApplyModifiedProperties()</code> at the bottom — that earns Undo, dirty-flagging, multi-object editing, and prefab overrides for free.</li>
+                        <li><code>EditorGUILayout</code> gives you headers, help boxes, horizontal groups, indenting, and change checks with automatic layout.</li>
+                        <li>A <strong>Property Drawer</strong> (<code>[CustomPropertyDrawer]</code> + a <code>PropertyAttribute</code>) customizes one field or attribute <em>everywhere</em> it appears — the reusable option.</li>
+                        <li>Editor code must live in an <strong>Editor folder or Editor-only asmdef</strong> (Lesson 1.1); the runtime attribute and its Editor drawer sit on opposite sides of that line.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You've reshaped the Inspector that Unity gives you. Next you'll build a window of your own from nothing. In <strong>Lesson 7.2: EditorWindows with UI Toolkit</strong>, you'll add a menu item, open a dockable <code>EditorWindow</code>, and construct its interface with modern UI Toolkit <code>VisualElement</code>s — labels, buttons, and a <code>ListView</code> — the foundation for the level-layout tool at the end of this module.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧰 The Editor is yours now</h3>
+                    <p>You can validate data, add buttons, and reshape any Inspector — safely, through the serialization pipeline. That's the first real step from using Unity to <em>extending</em> it.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_30.html" class="prev-lesson">← Previous: A Small Authoritative Multiplayer Prototype</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_32.html" class="next-lesson">Next: EditorWindows with UI Toolkit →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

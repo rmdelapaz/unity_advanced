@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Track down memory the way pros do: managed vs native memory, the Memory Profiler package, capturing and comparing snapshots to find a leak, reading the tree map, and understanding exactly what keeps an object alive — references, static fields, and events you forgot to unsubscribe.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 2.2: Hunting Memory — The Memory Profiler — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 2: Performance Engineering</a></li>
+            <li aria-current="page">Lesson 2.2: Hunting Memory — The Memory Profiler</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>💾 Lesson 2.2: Hunting Memory — The Memory Profiler</h1>
+                <p class="lead">The CPU Profiler tells you how fast your frame is. It says almost nothing about the slow, silent failure mode that crashes shipped games: memory that grows and never comes back. A texture that's loaded twice, an event handler that pins a whole scene, a static list that only ever appends — none of these spike the frame graph, but any of them will eventually exhaust a device and force an out-of-memory kill. This lesson is about the dedicated <strong>Memory Profiler</strong>: capturing snapshots of your entire heap, reading them, and comparing two of them to catch a leak red-handed.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Distinguish <strong>managed</strong> memory (the C# / GC heap) from <strong>native</strong> memory (engine objects, textures, meshes)</li>
+                        <li>Install the <strong>Memory Profiler</strong> package and <strong>capture a snapshot</strong> of a running game</li>
+                        <li>Read the <strong>tree map</strong> to see which categories dominate memory</li>
+                        <li><strong>Compare two snapshots</strong> to isolate exactly what grew between them — the core leak-hunting technique</li>
+                        <li>Explain what <strong>keeps an object alive</strong>: references, static fields, and events left subscribed</li>
+                        <li>Recognize the cost of <strong>textures, meshes, and assets</strong> sitting resident in memory</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 65 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 2.1 (the Profiler and its Memory module) &amp; comfort with C# events/delegates</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#twoheaps" class="toc-link">Two Kinds of Memory</a></li>
+                        <li><a href="#package" class="toc-link">The Memory Profiler Package</a></li>
+                        <li><a href="#snapshot" class="toc-link">Capturing a Snapshot</a></li>
+                        <li><a href="#treemap" class="toc-link">Reading the Tree Map</a></li>
+                        <li><a href="#compare" class="toc-link">Comparing Snapshots to Find a Leak</a></li>
+                        <li><a href="#alive" class="toc-link">What Keeps an Object Alive</a></li>
+                        <li><a href="#leakfix" class="toc-link">A Real Leak and Its Fix</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="twoheaps" class="lesson-section">
+                <h2>Two Kinds of Memory</h2>
+                <p>Before you can read a memory snapshot, you need to know that a Unity game holds memory in two very different places, and confusing them will send you hunting in the wrong one.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🧵 Managed memory</h4>
+                        <p>The <strong>C# heap</strong> the garbage collector owns. Every <code>class</code> instance, array, closure, and boxed value lives here. The GC frees it automatically — <em>when</em> nothing references it. Managed leaks are really "objects the GC can't collect because something still points at them." This is where your code's own footprint lives.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>⚙️ Native memory</h4>
+                        <p>Memory the <strong>engine (C++) side</strong> owns: textures, meshes, audio clips, render targets, the scene graph, physics data. A managed <code>Texture2D</code> object is a tiny handle in the C# heap; the actual pixel data is native. This is usually where the <em>big</em> numbers are, and it's freed by unloading assets, not by the GC.</p>
+                    </div>
+                </div>
+
+                <p>The relationship matters: a <code>Texture2D</code> you created in code is a small managed wrapper pointing at a large native buffer. Drop the last managed reference and the GC eventually collects the wrapper — but the native buffer only frees when Unity unloads that asset (via <code>Resources.UnloadUnusedAssets</code>, <code>Addressables.Release</code>, or <code>Destroy</code> for a runtime-created one). Forget that, and you leak megabytes of native memory while the managed heap looks innocent.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — a "leak" in a garbage-collected engine</h4>
+                    <p>Unity doesn't leak the way C++ does (a forgotten <code>free</code>). A managed <strong>leak</strong> is an object you're <em>done with</em> that the GC still can't collect, because a live reference somewhere — a static field, a subscribed event, a cached list — keeps pointing at it. The memory is "reachable," so the GC keeps it, forever. The Memory Profiler's job is to show you that reference chain.</p>
+                </div>
+            </section>
+
+            <section id="package" class="lesson-section">
+                <h2>The Memory Profiler Package</h2>
+                <p>The Memory module you met in Lesson 2.1 gives you live totals and per-frame allocation — a smoke alarm. To actually investigate <em>what</em> is in memory, you install the separate <strong>Memory Profiler</strong> package: <strong>Window → Package Manager → Unity Registry → Memory Profiler → Install</strong>. It adds a new window under <strong>Window → Analysis → Memory Profiler</strong>.</p>
+                <p>Where the CPU Profiler streams continuous data, the Memory Profiler works in <strong>snapshots</strong>: a full, frozen dump of every managed and native object in memory at the instant you press capture, complete with sizes and — crucially — the references between them. A snapshot is heavy to take (the game hitches for a moment) and that's fine; you take a handful deliberately, not continuously.</p>
+
+                <blockquote>
+                    <strong>💡 Snapshot, don't stream.</strong> Memory problems are about <em>accumulation over time</em>, not one bad frame. The right rhythm is: capture a snapshot at a known-good baseline, do something (load a level, open and close a menu, play a wave), capture again, and <em>diff</em>. The difference between two snapshots is the story.
+                </blockquote>
+            </section>
+
+            <section id="snapshot" class="lesson-section">
+                <h2>Capturing a Snapshot</h2>
+                <p>With the window open and your game in Play mode (or, better, a Development Build connected — the same on-device rule from Lesson 2.1 applies), press <strong>Capture</strong>. After a moment the snapshot appears in the left-hand list with a timestamp and total size. Each snapshot is saved to disk in your project, so you can reopen and compare them across sessions.</p>
+                <p>You can capture from either a <em>connected player</em> (real device memory — what you trust) or the <em>editor</em> (convenient, but inflated by editor overhead exactly as CPU timings were). For any decision that ships, capture from the build on device.</p>
+                <p>Once captured, a snapshot opens into several views. The most useful two are the <strong>Tree Map</strong> (what's using memory, by category and size) and the <strong>All Of Memory</strong> / object table (every object, searchable, with its references). Let's read the tree map first.</p>
+            </section>
+
+            <section id="treemap" class="lesson-section">
+                <h2>Reading the Tree Map</h2>
+                <p>The tree map is a set of nested rectangles where <strong>area is proportional to bytes</strong>. Big categories are big rectangles; you find your heaviest memory users literally by looking for the largest boxes. Typical top-level categories are <em>Native Objects</em> (broken down into Texture2D, Mesh, AudioClip, RenderTexture…), the <em>Managed Heap</em>, <em>Graphics</em> driver memory, and executable/other. Click a box to drill in.</p>
+                <p>Here is the Memory Profiler reconstructed — a tree map on the left, and on the right the snapshot-comparison table that turns it into a leak-finding tool.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 920 600" role="img" aria-labelledby="memTitle memDesc">
+                        <title id="memTitle">The Unity Memory Profiler — tree map and snapshot comparison</title>
+                        <desc id="memDesc">A reconstruction of Unity's Memory Profiler window. A toolbar across the top has a Capture button, a snapshot dropdown, and a Compare toggle. The left two-thirds is a tree map: a grid of rectangles sized by memory usage. The largest rectangle is labelled Texture2D at 148 megabytes, filling most of the area. Smaller rectangles are labelled Mesh 42 megabytes, RenderTexture 30 megabytes, AudioClip 18 megabytes, Managed Heap 24 megabytes subdivided into small cells, and a strip of tiny cells labelled Other. The right third is a snapshot-comparison table headed Compare: Snapshot A menu-open versus Snapshot B menu-closed. The table has columns Object Type, Count A, Count B, Delta, and Size Delta. Rows read: EnemyView plus 40 plus 3.2 megabytes highlighted red as growing; Texture2D icon-atlas plus 2 plus 8 megabytes highlighted red; Delegate slash EventHandler plus 40 plus 0.6 megabytes highlighted red; and Mesh 0 delta 0 in grey. A caption strip at the bottom of the table reads: 40 EnemyView objects that should have been destroyed are still alive — a leak.</desc>
+
+                        <rect x="0" y="0" width="920" height="600" rx="8" fill="#22262d"/>
+
+                        <!-- toolbar -->
+                        <rect x="12" y="12" width="896" height="32" rx="5" fill="#2b3038" stroke="#3a4149"/>
+                        <rect x="22" y="18" width="80" height="20" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="62" y="32" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#dfe8ff">◉ Capture</text>
+                        <rect x="112" y="18" width="150" height="20" rx="4" fill="#2f3945" stroke="#45525f"/>
+                        <text x="187" y="32" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#cfe0ff">Snapshot B (menu closed) ▾</text>
+                        <rect x="272" y="18" width="86" height="20" rx="4" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="315" y="32" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#dfe8ff">⇄ Compare</text>
+                        <text x="898" y="32" text-anchor="end" font-family="'Segoe UI',sans-serif" font-size="10" fill="#8f9aa8">Total: 262 MB</text>
+
+                        <!-- tree map area -->
+                        <rect x="12" y="52" width="560" height="536" rx="5" fill="#1b1f25" stroke="#3a4149"/>
+                        <text x="24" y="72" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#dfe8ff">Tree Map — area = bytes</text>
+
+                        <!-- big Texture2D box -->
+                        <rect x="22" y="82" width="360" height="330" rx="4" fill="#3a5c9a" stroke="#5578b8"/>
+                        <text x="202" y="240" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="18" font-weight="700" fill="#eaf1ff">Texture2D</text>
+                        <text x="202" y="266" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" fill="#cfe0ff">148 MB</text>
+                        <text x="202" y="290" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#aeb8c4">Native · pixel data</text>
+
+                        <!-- Mesh -->
+                        <rect x="386" y="82" width="184" height="150" rx="4" fill="#3f7d54" stroke="#57a06f"/>
+                        <text x="478" y="150" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#e8f5ec">Mesh</text>
+                        <text x="478" y="172" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" fill="#cfe8d6">42 MB</text>
+
+                        <!-- RenderTexture -->
+                        <rect x="386" y="236" width="184" height="100" rx="4" fill="#8a6f3a" stroke="#b0904f"/>
+                        <text x="478" y="278" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#f5ecd8">RenderTexture</text>
+                        <text x="478" y="298" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#e8dcc0">30 MB</text>
+
+                        <!-- AudioClip -->
+                        <rect x="386" y="340" width="90" height="72" rx="4" fill="#7a4b6a" stroke="#a06a8c"/>
+                        <text x="431" y="372" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#f5e0ee">AudioClip</text>
+                        <text x="431" y="388" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#e8cadf">18 MB</text>
+
+                        <!-- Other native -->
+                        <rect x="480" y="340" width="90" height="72" rx="4" fill="#4a5560" stroke="#65727f"/>
+                        <text x="525" y="372" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#dfe6ee">Other</text>
+                        <text x="525" y="388" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#aeb8c4">10 MB</text>
+
+                        <!-- Managed heap subdivided -->
+                        <rect x="22" y="416" width="548" height="160" rx="4" fill="#2b3038" stroke="#454d57"/>
+                        <text x="30" y="434" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#dfe8ff">Managed Heap — 24 MB</text>
+                        <g>
+                            <rect x="30" y="442" width="70" height="60" rx="3" fill="#5a4b8a"/><text x="65" y="476" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#e6ddff">EnemyView</text>
+                            <rect x="104" y="442" width="54" height="60" rx="3" fill="#46407a"/><text x="131" y="476" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="8.5" fill="#ded6ff">List&lt;T&gt;</text>
+                            <rect x="162" y="442" width="46" height="60" rx="3" fill="#46407a"/><text x="185" y="476" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="8.5" fill="#ded6ff">string</text>
+                            <rect x="212" y="442" width="40" height="60" rx="3" fill="#3d3568"/>
+                            <rect x="256" y="442" width="34" height="60" rx="3" fill="#3d3568"/>
+                            <rect x="294" y="442" width="28" height="60" rx="3" fill="#3d3568"/>
+                            <rect x="326" y="442" width="120" height="60" rx="3" fill="#333"/><text x="386" y="476" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">delegates / closures</text>
+                            <rect x="450" y="442" width="112" height="60" rx="3" fill="#2d2d2d"/>
+                        </g>
+                        <text x="30" y="524" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">Tip: the biggest boxes are where the memory is. Native textures usually dominate;</text>
+                        <text x="30" y="540" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">managed leaks hide in the small cells — find them by comparing snapshots (right).</text>
+
+                        <!-- compare table -->
+                        <rect x="584" y="52" width="324" height="536" rx="5" fill="#1b1f25" stroke="#3a4149"/>
+                        <text x="596" y="72" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#dfe8ff">Compare — A vs B</text>
+                        <text x="596" y="88" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">A: menu open · B: menu closed again</text>
+
+                        <!-- header row -->
+                        <rect x="592" y="98" width="308" height="24" rx="3" fill="#2b3038"/>
+                        <text x="600" y="114" font-family="'Consolas',monospace" font-size="9" fill="#9fb3d0">Type</text>
+                        <text x="760" y="114" text-anchor="middle" font-family="'Consolas',monospace" font-size="9" fill="#9fb3d0">Δ Count</text>
+                        <text x="866" y="114" text-anchor="end" font-family="'Consolas',monospace" font-size="9" fill="#9fb3d0">Δ Size</text>
+
+                        <!-- rows -->
+                        <rect x="592" y="126" width="308" height="30" rx="3" fill="#40282a"/>
+                        <text x="600" y="145" font-family="'Consolas',monospace" font-size="9.5" fill="#ffd0cc">EnemyView</text>
+                        <text x="760" y="145" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#ff9a90">+40</text>
+                        <text x="866" y="145" text-anchor="end" font-family="'Consolas',monospace" font-size="9.5" fill="#ff9a90">+3.2 MB</text>
+
+                        <rect x="592" y="160" width="308" height="30" rx="3" fill="#40282a"/>
+                        <text x="600" y="179" font-family="'Consolas',monospace" font-size="9.5" fill="#ffd0cc">Texture2D (icon-atlas)</text>
+                        <text x="760" y="179" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#ff9a90">+2</text>
+                        <text x="866" y="179" text-anchor="end" font-family="'Consolas',monospace" font-size="9.5" fill="#ff9a90">+8.0 MB</text>
+
+                        <rect x="592" y="194" width="308" height="30" rx="3" fill="#40282a"/>
+                        <text x="600" y="213" font-family="'Consolas',monospace" font-size="9.5" fill="#ffd0cc">Delegate / EventHandler</text>
+                        <text x="760" y="213" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#ff9a90">+40</text>
+                        <text x="866" y="213" text-anchor="end" font-family="'Consolas',monospace" font-size="9.5" fill="#ff9a90">+0.6 MB</text>
+
+                        <rect x="592" y="228" width="308" height="30" rx="3" fill="#243026"/>
+                        <text x="600" y="247" font-family="'Consolas',monospace" font-size="9.5" fill="#bfe6c8">Mesh</text>
+                        <text x="760" y="247" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fbf9a">0</text>
+                        <text x="866" y="247" text-anchor="end" font-family="'Consolas',monospace" font-size="9.5" fill="#8fbf9a">0</text>
+
+                        <rect x="592" y="262" width="308" height="30" rx="3" fill="#243026"/>
+                        <text x="600" y="281" font-family="'Consolas',monospace" font-size="9.5" fill="#bfe6c8">AudioClip</text>
+                        <text x="760" y="281" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fbf9a">0</text>
+                        <text x="866" y="281" text-anchor="end" font-family="'Consolas',monospace" font-size="9.5" fill="#8fbf9a">0</text>
+
+                        <!-- diagnosis callout -->
+                        <rect x="592" y="308" width="308" height="120" rx="5" fill="#2b3038" stroke="#a0574c"/>
+                        <text x="746" y="330" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#ffb3aa">⚠ Leak found</text>
+                        <text x="606" y="352" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6e6e6">The menu opened and closed, so counts</text>
+                        <text x="606" y="368" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6e6e6">should return to baseline. Instead 40</text>
+                        <text x="606" y="384" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6e6e6">EnemyView + 40 delegates survived —</text>
+                        <text x="606" y="400" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6e6e6">an event was never unsubscribed, pinning</text>
+                        <text x="606" y="416" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6e6e6">the views the GC should have freed.</text>
+
+                        <!-- reference chain hint -->
+                        <rect x="592" y="440" width="308" height="136" rx="5" fill="#2b3038" stroke="#454d57"/>
+                        <text x="606" y="460" font-family="'Segoe UI',sans-serif" font-size="10" font-weight="700" fill="#c9d4e6">Why it's alive (reference path)</text>
+                        <text x="606" y="484" font-family="'Consolas',monospace" font-size="9" fill="#9be6b0">GameEvents.OnScore (static)</text>
+                        <text x="614" y="500" font-family="'Consolas',monospace" font-size="9" fill="#8f9aa8">└─ holds delegate →</text>
+                        <text x="614" y="518" font-family="'Consolas',monospace" font-size="9" fill="#ffd79a">EnemyView.HandleScore</text>
+                        <text x="622" y="534" font-family="'Consolas',monospace" font-size="9" fill="#8f9aa8">└─ target is →</text>
+                        <text x="622" y="552" font-family="'Consolas',monospace" font-size="9" fill="#8fd0ff">the EnemyView instance</text>
+                        <text x="606" y="570" font-family="'Segoe UI',sans-serif" font-size="9" fill="#8f9aa8">a static root → the GC can never free it</text>
+                    </svg>
+                    <figcaption>Figure 1: The Memory Profiler (reconstructed diagram). Left: the <strong>tree map</strong>, where box area equals bytes — native <code>Texture2D</code> data dominates, as it usually does. Right: the <strong>snapshot comparison</strong> of "menu open" (A) versus "menu closed again" (B). Counts should have returned to baseline; instead 40 <code>EnemyView</code>s and 40 delegates survived. The reference-path panel names the culprit: a <em>static</em> event still holds a delegate whose target is each view, so the GC can never collect them.</figcaption>
+                </figure>
+
+                <blockquote>
+                    <strong>💡 Why a diagram, not a screenshot?</strong> Like the Profiler, the Memory Profiler is a UI Toolkit window that can't be captured cleanly, so it's reconstructed from the real layout, real category names, and a real reference path. The numbers illustrate the exact pattern you'll hunt: a comparison where things that should have gone away didn't.
+                </blockquote>
+            </section>
+
+            <section id="compare" class="lesson-section">
+                <h2>Comparing Snapshots to Find a Leak</h2>
+                <p>The single most valuable thing the Memory Profiler does is <strong>diff two snapshots</strong>. One snapshot tells you what's in memory <em>now</em> — useful, but you can't tell a legitimate 148&nbsp;MB of textures from a leak. Two snapshots taken around a repeatable action tell you what <em>changed</em>, and change is where leaks live.</p>
+                <p>The technique — call it the <strong>bracket test</strong> — is:</p>
+                <ol>
+                    <li>Get to a stable baseline (e.g. main gameplay, nothing transient open). <strong>Capture A.</strong></li>
+                    <li>Do a complete round-trip that should end where it started: open a menu and close it, load a level and return, spawn a wave and clear it.</li>
+                    <li><strong>Capture B.</strong></li>
+                    <li>Switch the window to <strong>Compare</strong> mode with A and B. Sort by <strong>Δ Count</strong> or <strong>Δ Size</strong>.</li>
+                </ol>
+                <p>If the round-trip was truly balanced, most deltas are zero. Any type with a <em>positive</em> delta that shouldn't have grown is your suspect — exactly the red <code>EnemyView&nbsp;+40</code> row in Figure 1. Repeat the round-trip several times before capturing B and the leak <em>compounds</em> (+40 becomes +120), making it unmistakable and proving it's not just one-time initialization.</p>
+
+                <div class="card card-success">
+                    <h4>✅ Balanced round-trips are the whole trick</h4>
+                    <p>The power of the bracket test comes from choosing an action that <em>should</em> net to zero. "Open and close the pause menu ten times" must leave memory where it started; if it doesn't, the delta <em>is</em> the leak, with no ambiguity. Design your test so the correct answer is "no change," and any change indicts itself.</p>
+                </div>
+            </section>
+
+            <section id="alive" class="lesson-section">
+                <h2>What Keeps an Object Alive</h2>
+                <p>Once the diff names a leaking type, the question becomes <em>why won't the GC collect it?</em> The GC frees anything not reachable from a <strong>root</strong> (a static field, a live local, a running thread). So a leak is always: "there's still a reference path from some root to this object." The Memory Profiler shows you that path (the reference panel in Figure 1). Three sources cause the overwhelming majority of managed leaks:</p>
+
+                <div class="pillar-row">
+                    <div class="card card-warning pillar">
+                        <h4>🔗 Lingering references</h4>
+                        <p>A cache, list, or dictionary that you add to but never remove from. The classic: a <code>static List&lt;Enemy&gt; _all</code> you <code>Add</code> on spawn but forget to <code>Remove</code> on death. Every enemy ever spawned stays alive forever.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>🌐 Static fields</h4>
+                        <p>Statics are GC roots that live for the whole program. Anything a static field points at — directly or through a chain — can never be collected. A single misplaced <code>static</code> can pin an entire scene's worth of objects.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>📡 Events not unsubscribed</h4>
+                        <p>The most common Unity leak. When object B does <code>someEvent += B.Handler</code>, the event's delegate holds a reference to <strong>B</strong>. Destroy B's GameObject and the C# object <em>still can't be collected</em>, because the (often static or long-lived) event still points at it. You must <code>-=</code> in <code>OnDestroy</code>/<code>OnDisable</code>.</p>
+                    </div>
+                </div>
+
+                <blockquote>
+                    <strong>🔎 The "destroyed but alive" trap.</strong> <code>Destroy(gameObject)</code> tears down the <em>native</em> Unity object, but the <em>managed</em> C# object behind it only dies when the GC can prove it's unreachable. If an event still holds it, you get a zombie: the GameObject is gone from the scene, yet its <code>MonoBehaviour</code> instance sits in the heap forever, its <code>Update</code> quietly not running but its memory never freed. This is why "I destroyed it, why is it still in the snapshot?" is one of the most common questions in memory work — and the answer is nearly always a missing <code>-=</code>.
+                </blockquote>
+            </section>
+
+            <section id="leakfix" class="lesson-section">
+                <h2>A Real Leak and Its Fix</h2>
+                <p>Here is the exact bug behind Figure 1. An <code>EnemyView</code> subscribes to a <em>static</em> score event so it can flash when the player scores. It subscribes in <code>OnEnable</code> but never unsubscribes — so when the enemy is destroyed, the static event keeps the view alive:</p>
+
+                <pre><code class="language-csharp">// A long-lived (often static) event bus — survives the whole session.
+public static class GameEvents
+{
+    public static event System.Action&lt;int&gt; OnScore;
+    public static void RaiseScore(int total) =&gt; OnScore?.Invoke(total);
+}
+
+public class EnemyView : MonoBehaviour
+{
+    void OnEnable()
+    {
+        // Subscribing makes GameEvents.OnScore hold a delegate
+        // whose target is THIS instance...
+        GameEvents.OnScore += HandleScore;
+    }
+
+    // ...but we never unsubscribe. When this GameObject is destroyed,
+    // the static event still references us, so the GC can never
+    // collect this EnemyView. Every enemy ever spawned leaks.
+
+    void HandleScore(int total) { /* flash the UI */ }
+}</code></pre>
+
+                <p>The snapshot diff caught it: after opening and closing the enemy view forty times, forty <code>EnemyView</code> instances and forty delegates survived. The fix is one line — <strong>unsubscribe in the mirror-image callback</strong>:</p>
+
+                <pre><code class="language-csharp">public class EnemyView : MonoBehaviour
+{
+    void OnEnable()
+    {
+        GameEvents.OnScore += HandleScore;
+    }
+
+    void OnDisable()
+    {
+        // Mirror every subscription with an unsubscription.
+        // Now nothing long-lived references us; the GC can collect us.
+        GameEvents.OnScore -= HandleScore;
+    }
+
+    void HandleScore(int total) { /* flash the UI */ }
+}</code></pre>
+
+                <p>Re-run the bracket test after the fix and the <code>EnemyView</code> delta drops to zero — proof, not hope. The discipline generalizes: <strong>every <code>+=</code> needs a matching <code>-=</code></strong>, and the natural place is the paired lifecycle callback (<code>OnEnable</code>/<code>OnDisable</code>, or <code>Awake</code>-region subscribe / <code>OnDestroy</code> unsubscribe). The same rule applies to manual C# events, <code>UnityEvent</code> listeners added in code, and input-action callbacks.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Textures and assets: the native side of leaking</h4>
+                    <p>Managed leaks pin small objects; the megabytes usually leak on the <em>native</em> side. Loading the same texture through <code>Resources.Load</code> or <code>Addressables</code> repeatedly without releasing, instantiating materials (which <em>clones</em> them into memory) each frame, or never calling <code>Addressables.Release</code> on a handle all grow native memory that the GC can't touch. Watch the <code>Texture2D</code> and <code>Material</code> boxes in the tree map across a bracket test the same way you watch managed types — the icon-atlas <code>+8&nbsp;MB</code> row in Figure 1 is exactly this. We cover disciplined asset lifetime in the Addressables lessons (Module 7).</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Plant a leak, then catch it</h3>
+                    <p><strong>Objective:</strong> Run the full bracket test end to end on a leak you created.</p>
+                    <ol>
+                        <li>Create the leaking <code>EnemyView</code> above (subscribe in <code>OnEnable</code>, <em>no</em> <code>OnDisable</code>). Spawn and immediately destroy a handful of them behind a button press.</li>
+                        <li>Install the Memory Profiler package. Enter Play mode and <strong>Capture A</strong>.</li>
+                        <li>Press your button several times to spawn/destroy a batch. <strong>Capture B.</strong></li>
+                        <li>Compare A and B, sort by <strong>Δ Count</strong>, and find the <code>EnemyView</code> row that grew when it should be zero.</li>
+                        <li>Add the <code>OnDisable</code> unsubscribe, repeat, and confirm the delta is now zero.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What you should observe</summary>
+                        <p>Before the fix, <code>EnemyView</code> (and a matching <code>Action</code>/delegate) count climbs with every batch and never falls — the diff shows a growing positive delta. Inspecting one leaked instance's references leads back to <code>GameEvents.OnScore</code>, a static root. After adding <code>OnDisable() { GameEvents.OnScore -= HandleScore; }</code>, the same test nets to zero delta. You've reproduced the entire professional workflow: suspect via diff, confirm via reference path, fix, re-measure.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Managed or native?</h3>
+                    <p>For each item, decide whether the leaked bytes live in <strong>managed</strong> or <strong>native</strong> memory: (a) a <code>static List&lt;Transform&gt;</code> you never clear; (b) 200&nbsp;MB of duplicate <code>Texture2D</code> pixel data from re-loading an atlas; (c) a lambda you subscribed to an event and never removed; (d) instantiated <code>Material</code> clones you never destroy.</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>Managed</strong> — the <code>List</code> and its references are on the C# heap (though the <code>Transform</code>s it pins are native handles). (b) <strong>Native</strong> — texture pixel data is engine-owned. (c) <strong>Managed</strong> — the delegate/closure lives on the C# heap. (d) <strong>Native</strong> — material instances are engine objects; instantiating clones them into native memory. The lesson: managed diffs catch <em>counts</em> that grow (leaked wrappers, subscriptions), tree-map boxes catch <em>bytes</em> that grow (textures, meshes, materials). Use both.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> A <code>Texture2D</code>'s tiny C# object is on the managed heap. Where do its actual pixels live?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="The managed object is just a small handle — the bulk of the data isn't on the GC heap.">A) On the managed (GC) heap alongside the C# object</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! The C# Texture2D is a small managed wrapper; the pixel data is native (engine/C++) memory, freed by unloading the asset, not by the GC.">B) In native memory, owned by the engine and freed by unloading the asset</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Pixels aren't stored on the stack — that's for small locals and frames.">C) On the call stack</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What is the core technique for finding a leak with the Memory Profiler?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="One snapshot can't distinguish legitimate usage from a leak — you need change over time.">A) Read a single snapshot and look for the biggest number</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Capture around a balanced round-trip that should net to zero, then compare the two snapshots. Anything with a positive delta that shouldn't have grown is the leak.">B) Capture two snapshots around a balanced round-trip and compare the deltas</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Forcing a GC helps confirm, but the diagnostic is comparing snapshots.">C) Call <code>GC.Collect()</code> until memory stops dropping</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> You <code>Destroy(gameObject)</code> an enemy, but its <code>MonoBehaviour</code> is still in the snapshot. What's the most likely reason?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A still-subscribed event (often static/long-lived) holds a delegate targeting the instance, keeping it reachable so the GC can't collect it. Unsubscribe in OnDisable/OnDestroy.">A) Something long-lived — like a static event it never unsubscribed from — still references it</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Destroy does remove the native object; the managed one lingers because it's still referenced.">B) <code>Destroy</code> doesn't actually remove anything</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The GC doesn't run on a fixed clock you can wait out; the object is reachable, so it's kept regardless.">C) The GC only runs once per minute; just wait</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Which pairing correctly prevents an event-subscription leak on a <code>MonoBehaviour</code>?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Subscribing in both callbacks double-subscribes and never removes anything — that's worse.">A) <code>+=</code> in <code>OnEnable</code> and <code>+=</code> again in <code>OnDisable</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Mirror every subscription: += in OnEnable, -= in OnDisable (or Awake/OnDestroy). Then nothing long-lived references the object and the GC can collect it.">B) <code>+=</code> in <code>OnEnable</code> and a matching <code>-=</code> in <code>OnDisable</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Setting the field to null on your side doesn't remove your delegate from the other object's event.">C) Set the event to <code>null</code> in <code>Update</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Unity holds memory in two places: <strong>managed</strong> (the GC-owned C# heap) and <strong>native</strong> (engine-owned textures, meshes, audio) — the big bytes are usually native.</li>
+                        <li>The <strong>Memory Profiler</strong> package works in <strong>snapshots</strong>: full, frozen dumps of every object and the references between them.</li>
+                        <li>The <strong>tree map</strong> shows what's using memory by area = bytes; drill into the biggest boxes first.</li>
+                        <li>The core skill is the <strong>bracket test</strong>: capture around a balanced round-trip that should net to zero, then <strong>compare</strong> — any unexpected positive delta is the leak.</li>
+                        <li>An object leaks when it's still <strong>reachable from a root</strong>; the top three causes are lingering references, static fields, and <strong>events not unsubscribed</strong>.</li>
+                        <li>Mirror every <code>+=</code> with a <code>-=</code> in the paired lifecycle callback; verify the fix by re-running the bracket test to a zero delta.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Leaks are memory that never comes back. The other memory problem is churn: memory allocated and freed so fast that the garbage collector itself becomes a frame-time spike. In <strong>Lesson 2.3: Writing Garbage-Free Code</strong>, we hunt down every common allocation source — boxing, closures, LINQ, string building, hidden array copies — and refactor a method from allocating to completely garbage-free.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🕵️ You can catch a leak now</h3>
+                    <p>Snapshot, act, snapshot, diff, follow the reference path to the root, fix, re-measure. That loop turns "the game slowly dies after twenty minutes" from a mystery into a two-minute investigation.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_06.html" class="prev-lesson">← Previous: The Profiler in Depth</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_08.html" class="next-lesson">Next: Writing Garbage-Free Code →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

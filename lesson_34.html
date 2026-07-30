@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Mini-project: build an EditorWindow that lists Addressable prefabs and stamps placement markers into a saved ScriptableObject level layout, plus a runtime LevelLoader that reads the layout and InstantiateAsyncs each marker's Addressable, releasing every instance on unload. Full scripts for the editor tool, the layout asset, and the loader.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 7.4: Mini-Project — A Level-Layout Tool with Addressable Loading — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 7: Editor Tooling &amp; Addressables</a></li>
+            <li aria-current="page">Lesson 7.4: Mini-Project — A Level-Layout Tool</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🏗️ Lesson 7.4: Mini-Project — A Level-Layout Tool with Addressable Loading</h1>
+                <p class="lead">Time to put the whole module together. You'll build a real pipeline tool: an <strong>EditorWindow</strong> (Lesson 7.2) that lists your <strong>Addressable</strong> prefabs (Lesson 7.3), lets you stamp <strong>placement markers</strong> into the scene, and saves the result as a small <strong>ScriptableObject</strong> layout asset. Then you'll write a runtime <code>LevelLoader</code> that reads that layout and <code>InstantiateAsync</code>es each marker's Addressable — releasing every instance cleanly on unload. Author-time tooling and runtime content management, working as one system.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 What You'll Build</h2>
+                    <ul>
+                        <li>A <code>LevelLayout</code> <strong>ScriptableObject</strong> that stores a list of (Addressable reference, position, rotation) markers</li>
+                        <li>A <code>LevelLayoutWindow</code> <strong>EditorWindow</strong> (UI Toolkit) that lists Addressable prefabs, stamps markers into the active layout, and saves it</li>
+                        <li>A runtime <code>LevelLoader</code> <strong>MonoBehaviour</strong> that loads the layout, spawns every marker asynchronously, and releases all instances on unload</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 90 minutes &nbsp;·&nbsp; <strong>Prerequisites:</strong> Lessons 7.1–7.3 (custom Editors, EditorWindows/UI Toolkit, Addressables)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#plan" class="toc-link">The Plan &amp; Architecture</a></li>
+                        <li><a href="#step1" class="toc-link">Step 1 — The Layout ScriptableObject</a></li>
+                        <li><a href="#step2" class="toc-link">Step 2 — The EditorWindow Tool</a></li>
+                        <li><a href="#step3" class="toc-link">Step 3 — Stamping &amp; Saving Markers</a></li>
+                        <li><a href="#step4" class="toc-link">Step 4 — The Runtime LevelLoader</a></li>
+                        <li><a href="#run" class="toc-link">Step 5 — Run It</a></li>
+                        <li><a href="#built" class="toc-link">What You Built &amp; Extend It</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="plan" class="lesson-section">
+                <h2>The Plan &amp; Architecture</h2>
+                <p>The tool has three pieces that pass data down a chain. The <strong>Editor window</strong> writes into a <strong>layout asset</strong>; the <strong>runtime loader</strong> reads that asset and drives <strong>Addressables</strong>. The layout asset is the hinge — it's authored in the Editor but consumed at runtime, so it must store only serializable, runtime-safe data (an <code>AssetReference</code>, a position, a rotation), never Editor types.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 420" role="img" aria-labelledby="archTitle archDesc">
+                        <title id="archTitle">Architecture of the level-layout tool and its runtime loader</title>
+                        <desc id="archDesc">A left-to-right flow in two lanes. Top lane, "Edit time": the LevelLayoutWindow EditorWindow shows a ListView of Addressable prefabs; a "Stamp Marker" action writes an entry into the LevelLayout ScriptableObject, which stores a list of markers, each an AssetReference plus position and rotation. Bottom lane, "Runtime": the LevelLoader MonoBehaviour reads the LevelLayout, and for each marker calls InstantiateAsync on its AssetReference, producing spawned GameObjects in the scene. An arrow from the spawned objects back to LevelLoader is labelled "ReleaseInstance on unload".</desc>
+                        <rect x="0" y="0" width="900" height="420" rx="8" fill="#22262d"/>
+
+                        <!-- lane labels -->
+                        <text x="20" y="34" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#8fd0ff">✎ EDIT TIME (Editor assembly)</text>
+                        <text x="20" y="244" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#9be6b0">▶ RUNTIME (ships in build)</text>
+                        <line x1="20" y1="212" x2="880" y2="212" stroke="#3a4149" stroke-dasharray="5 5"/>
+
+                        <defs>
+                            <marker id="ah34" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#eaeaea"/></marker>
+                            <marker id="ahg34" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker>
+                        </defs>
+
+                        <!-- EditorWindow -->
+                        <rect x="30" y="48" width="230" height="150" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="145" y="70" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#dfe8ff">LevelLayoutWindow</text>
+                        <text x="145" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">EditorWindow · UI Toolkit</text>
+                        <rect x="46" y="96" width="198" height="86" rx="4" fill="#26292e" stroke="#4a4f57"/>
+                        <text x="60" y="114" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9aa4b0">ListView — Addressable prefabs</text>
+                        <rect x="52" y="120" width="186" height="18" fill="#2b2f35"/><text x="62" y="133" font-family="'Segoe UI',sans-serif" font-size="10" fill="#d6dde6">🧩 Enemies/Goblin</text>
+                        <rect x="52" y="140" width="186" height="18" fill="#3a5f8a"/><text x="62" y="153" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ffffff">🧩 Props/Barrel</text>
+                        <rect x="52" y="160" width="186" height="16" fill="#2b2f35"/><text x="62" y="172" font-family="'Segoe UI',sans-serif" font-size="10" fill="#d6dde6">🧩 Levels/Forest</text>
+
+                        <!-- stamp action -->
+                        <line x1="262" y1="123" x2="322" y2="123" stroke="#eaeaea" stroke-width="2.4" marker-end="url(#ah34)"/>
+                        <text x="292" y="114" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ffd79a">Stamp</text>
+
+                        <!-- ScriptableObject -->
+                        <rect x="326" y="48" width="250" height="150" rx="8" fill="#30363f" stroke="#5b76a0"/>
+                        <text x="451" y="70" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#cfe0ff">LevelLayout</text>
+                        <text x="451" y="86" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">ScriptableObject asset (.asset)</text>
+                        <text x="342" y="108" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9aa4b0">List&lt;Marker&gt; markers</text>
+                        <rect x="342" y="116" width="218" height="24" rx="3" fill="#243244"/>
+                        <text x="451" y="132" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fd0ff">AssetReference · pos · rot</text>
+                        <rect x="342" y="144" width="218" height="24" rx="3" fill="#243244"/>
+                        <text x="451" y="160" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#8fd0ff">AssetReference · pos · rot</text>
+                        <text x="451" y="186" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#7f8791">serializable runtime data only</text>
+
+                        <!-- crosses lane: SO read by loader -->
+                        <line x1="451" y1="198" x2="451" y2="256" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ahg34)"/>
+                        <text x="500" y="230" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9be6b0">read at runtime</text>
+
+                        <!-- LevelLoader -->
+                        <rect x="326" y="258" width="250" height="130" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="451" y="280" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#dfe8ff">LevelLoader</text>
+                        <text x="451" y="296" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#8f9aa8">MonoBehaviour</text>
+                        <text x="451" y="318" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#c9d4e6">foreach marker:</text>
+                        <rect x="342" y="326" width="218" height="22" rx="3" fill="#26382a"/>
+                        <text x="451" y="341" text-anchor="middle" font-family="'Consolas',monospace" font-size="9.5" fill="#9be6b0">InstantiateAsync(marker.prefab)</text>
+                        <text x="451" y="366" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9" fill="#7f8791">tracks every handle it spawns</text>
+
+                        <!-- loader -> scene -->
+                        <line x1="578" y1="323" x2="648" y2="323" stroke="#9be6b0" stroke-width="2.4" marker-end="url(#ahg34)"/>
+                        <text x="613" y="314" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9be6b0">spawn</text>
+
+                        <!-- scene -->
+                        <rect x="652" y="258" width="220" height="130" rx="8" fill="#14304a"/>
+                        <text x="762" y="280" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#bcd4ee">Scene</text>
+                        <g fill="#7fc4ff">
+                            <rect x="676" y="298" width="14" height="14"/><rect x="708" y="304" width="14" height="14"/><rect x="742" y="296" width="14" height="14"/><rect x="778" y="306" width="14" height="14"/><rect x="812" y="298" width="14" height="14"/>
+                            <rect x="690" y="330" width="14" height="14"/><rect x="726" y="336" width="14" height="14"/><rect x="762" y="328" width="14" height="14"/><rect x="798" y="338" width="14" height="14"/><rect x="834" y="330" width="14" height="14"/>
+                        </g>
+                        <text x="762" y="374" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#bcd4ee">instantiated markers</text>
+
+                        <!-- release back -->
+                        <path d="M762 388 C 762 406, 451 406, 451 390" fill="none" stroke="#ff9a9a" stroke-width="2" marker-end="url(#ah34)"/>
+                        <text x="606" y="416" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ff9a9a">ReleaseInstance on unload — every handle released</text>
+                    </svg>
+                    <figcaption>Figure 1: The tool's architecture. The <code>LevelLayoutWindow</code> (Editor-only) stamps markers into a <code>LevelLayout</code> ScriptableObject; the runtime <code>LevelLoader</code> reads that asset and <code>InstantiateAsync</code>es each marker's Addressable, tracking every handle so it can <code>ReleaseInstance</code> them all on unload.</figcaption>
+                </figure>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Mind the assembly boundary (Lessons 1.1 &amp; 7.1)</h4>
+                    <p>The <code>LevelLayout</code> ScriptableObject and the <code>LevelLoader</code> are <strong>runtime</strong> code — they ship in the build, so they go in a normal assembly. The <code>LevelLayoutWindow</code> uses <code>UnityEditor</code>/<code>EditorWindow</code>, so it is <strong>Editor-only</strong> and must live in an <code>Editor</code> folder or Editor asmdef. Same line we've drawn all module — here it decides which of the three files ships.</p>
+                </div>
+            </section>
+
+            <section id="step1" class="lesson-section">
+                <h2>Step 1 — The Layout ScriptableObject</h2>
+                <p>Start with the data. A <code>LevelLayout</code> holds a list of markers, and each marker is an <code>AssetReference</code> (which Addressable to spawn) plus a position and rotation. Marking the marker <code>[System.Serializable]</code> lets Unity save it inside the asset; <code>[CreateAssetMenu]</code> lets you make one from the Project window's <em>Create</em> menu.</p>
+                <pre><code class="language-csharp">using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.AddressableAssets;   // AssetReferenceGameObject
+
+// One placed object: which Addressable, and where.
+[System.Serializable]
+public class LayoutMarker
+{
+    public AssetReferenceGameObject prefab;   // stored as an Addressables key
+    public Vector3 position;
+    public Vector3 eulerRotation;
+}
+
+// The saved level: just a list of markers. Runtime-safe, serializable data.
+[CreateAssetMenu(fileName = "LevelLayout", menuName = "Level Tools/Level Layout")]
+public class LevelLayout : ScriptableObject
+{
+    public List&lt;LayoutMarker&gt; markers = new();
+}</code></pre>
+
+                <p>That's the entire persistence layer. Because it's a ScriptableObject, it's a real project asset you can select, inspect, version-control, and hand to a designer. Because every field is a plain serializable type, it loads at runtime with no Editor dependency. The <code>AssetReferenceGameObject</code> is doing the heavy lifting from Lesson 7.3 — it remembers <em>which</em> Addressable without hard-loading it.</p>
+            </section>
+
+            <section id="step2" class="lesson-section">
+                <h2>Step 2 — The EditorWindow Tool</h2>
+                <p>Now the authoring window. It needs a field to point at the active <code>LevelLayout</code> asset, a <code>ListView</code> of the Addressable prefabs you can place, and buttons to stamp and save. We build the shell in <code>CreateGUI</code> exactly as in Lesson 7.2. To discover which prefabs are Addressable, we read the Addressables settings in the Editor:</p>
+                <pre><code class="language-csharp">using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UIElements;
+using UnityEditor;
+using UnityEditor.AddressableAssets;              // AddressableAssetSettingsDefaultObject
+using UnityEditor.AddressableAssets.Settings;     // AddressableAssetEntry
+
+public class LevelLayoutWindow : EditorWindow
+{
+    LevelLayout activeLayout;                      // the asset we're editing
+    readonly List&lt;string&gt; addressableKeys = new(); // addresses we can stamp
+    ListView prefabList;
+    Label statusLabel;
+
+    [MenuItem("Tools/Level Layout Tool")]
+    public static void ShowWindow()
+    {
+        var w = GetWindow&lt;LevelLayoutWindow&gt;();
+        w.titleContent = new GUIContent("Level Layout");
+        w.minSize = new Vector2(340, 320);
+    }
+
+    public void CreateGUI()
+    {
+        var root = rootVisualElement;
+        root.style.paddingTop = root.style.paddingLeft =
+            root.style.paddingRight = root.style.paddingBottom = 8;
+
+        var title = new Label("Level Layout Tool");
+        title.style.fontSize = 16;
+        title.style.unityFontStyleAndWeight = FontStyle.Bold;
+        title.style.marginBottom = 8;
+        root.Add(title);
+
+        // Field to assign the LevelLayout asset we're authoring into.
+        var layoutField = new ObjectField("Layout Asset")
+            { objectType = typeof(LevelLayout), allowSceneObjects = false };
+        layoutField.RegisterValueChangedCallback(evt =&gt;
+            activeLayout = evt.newValue as LevelLayout);
+        root.Add(layoutField);
+
+        RefreshAddressableKeys();
+
+        prefabList = new ListView(addressableKeys, 20,
+            makeItem: () =&gt; new Label(),
+            bindItem: (e, i) =&gt; ((Label)e).text = "🧩 " + addressableKeys[i]);
+        prefabList.selectionType = SelectionType.Single;
+        prefabList.style.flexGrow = 1;
+        prefabList.style.marginTop = 6;
+        root.Add(prefabList);
+
+        // Button row.
+        var row = new VisualElement();
+        row.style.flexDirection = FlexDirection.Row;
+        row.style.marginTop = 6;
+
+        var stampBtn = new Button(StampSelected) { text = "Stamp Marker at Scene View" };
+        stampBtn.style.flexGrow = 1;
+        var saveBtn = new Button(SaveLayout) { text = "Save" };
+        saveBtn.style.flexGrow = 1;
+        row.Add(stampBtn);
+        row.Add(saveBtn);
+        root.Add(row);
+
+        statusLabel = new Label("Assign a Layout Asset, pick a prefab, then Stamp.");
+        statusLabel.style.marginTop = 6;
+        statusLabel.style.color = new Color(0.6f, 0.66f, 0.72f);
+        root.Add(statusLabel);
+    }
+
+    // Read every Addressable entry's address from the project's settings.
+    void RefreshAddressableKeys()
+    {
+        addressableKeys.Clear();
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        if (settings == null) return;
+        foreach (var group in settings.groups)
+            foreach (AddressableAssetEntry entry in group.entries)
+                addressableKeys.Add(entry.address);
+    }
+}</code></pre>
+
+                <p>The <code>ObjectField</code> restricts its picker to <code>LevelLayout</code> assets, so you can only aim the tool at the right kind of asset. <code>RefreshAddressableKeys</code> walks the Addressables settings — every group, every entry — and collects each entry's address into the list the <code>ListView</code> displays. Selecting a row selects the prefab you're about to stamp.</p>
+            </section>
+
+            <section id="step3" class="lesson-section">
+                <h2>Step 3 — Stamping &amp; Saving Markers</h2>
+                <p>Stamping adds a marker for the selected prefab at the Scene view camera's pivot, so you place things where you're looking. Because the layout is a serialized asset, we edit it through the Undo system and mark it dirty so the change persists — the same discipline as Lesson 7.1's Inspector edits. Add these methods to the window:</p>
+                <pre><code class="language-csharp">    void StampSelected()
+    {
+        if (activeLayout == null)
+        {
+            statusLabel.text = "⚠ Assign a Layout Asset first.";
+            return;
+        }
+        int i = prefabList.selectedIndex;
+        if (i &lt; 0)
+        {
+            statusLabel.text = "⚠ Select a prefab in the list first.";
+            return;
+        }
+
+        string address = addressableKeys[i];
+
+        // Place at the Scene view's pivot (where the camera is looking).
+        Vector3 pos = SceneView.lastActiveSceneView != null
+            ? SceneView.lastActiveSceneView.pivot
+            : Vector3.zero;
+
+        // Record Undo on the asset BEFORE mutating it.
+        Undo.RecordObject(activeLayout, "Stamp Marker");
+
+        activeLayout.markers.Add(new LayoutMarker
+        {
+            // Build an AssetReference from the Addressable's GUID.
+            prefab = new AssetReferenceGameObject(AddressToGuid(address)),
+            position = pos,
+            eulerRotation = Vector3.zero
+        });
+
+        EditorUtility.SetDirty(activeLayout);   // mark for save
+        statusLabel.text = $"Stamped '{address}' — {activeLayout.markers.Count} marker(s).";
+    }
+
+    void SaveLayout()
+    {
+        if (activeLayout == null) return;
+        AssetDatabase.SaveAssets();             // write the .asset to disk
+        statusLabel.text = $"Saved {activeLayout.markers.Count} marker(s).";
+    }
+
+    // Look up an Addressable entry's asset GUID from its address.
+    static string AddressToGuid(string address)
+    {
+        var settings = AddressableAssetSettingsDefaultObject.Settings;
+        foreach (var group in settings.groups)
+            foreach (var entry in group.entries)
+                if (entry.address == address)
+                    return entry.guid;
+        return null;
+    }</code></pre>
+
+                <div class="card card-success">
+                    <h4>✅ Why go through Undo and SetDirty</h4>
+                    <p>An <code>EditorWindow</code> editing an asset faces the same trap as a custom Inspector: change the object directly and Unity may never save it, and the edit won't be undoable. <code>Undo.RecordObject</code> before the change and <code>EditorUtility.SetDirty</code> after are the window-side equivalents of Lesson 7.1's <code>serializedObject</code> brackets — they earn Undo and guarantee the layout persists.</p>
+                </div>
+
+                <p>That completes the Editor half: point the tool at a <code>LevelLayout</code>, select an Addressable prefab, frame the Scene view where you want it, and Stamp. Each stamp appends a fully runtime-safe marker to the asset. Now for the half that ships.</p>
+            </section>
+
+            <section id="step4" class="lesson-section">
+                <h2>Step 4 — The Runtime LevelLoader</h2>
+                <p>The loader is a plain <code>MonoBehaviour</code> — no Editor code — that takes a <code>LevelLayout</code> and brings it to life. For each marker it calls <code>InstantiateAsync</code>, awaits the handle, and <em>keeps</em> the handle so it can release the instance later. This is the "clear owner for every handle" pattern from Lesson 7.3, made concrete: the loader owns every instance it spawns and releases them all on unload.</p>
+                <pre><code class="language-csharp">using System.Collections.Generic;
+using System.Threading.Tasks;
+using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.ResourceManagement.AsyncOperations;
+
+public class LevelLoader : MonoBehaviour
+{
+    public LevelLayout layout;
+
+    // We keep a handle per spawned instance so we can release every one.
+    readonly List&lt;AsyncOperationHandle&lt;GameObject&gt;&gt; spawned = new();
+
+    async void Start()
+    {
+        if (layout != null)
+            await LoadAsync();
+    }
+
+    public async Task LoadAsync()
+    {
+        foreach (LayoutMarker marker in layout.markers)
+        {
+            if (marker.prefab == null || !marker.prefab.RuntimeKeyIsValid())
+                continue;
+
+            // Load-and-spawn this marker's Addressable at its saved transform.
+            AsyncOperationHandle&lt;GameObject&gt; handle = marker.prefab.InstantiateAsync(
+                marker.position, Quaternion.Euler(marker.eulerRotation));
+
+            await handle.Task;   // wait for this one before the next (or fire them all)
+
+            if (handle.Status == AsyncOperationStatus.Succeeded)
+                spawned.Add(handle);          // track it for release
+            else
+                Debug.LogError($"Failed to spawn a marker in {layout.name}");
+        }
+        Debug.Log($"Level loaded: {spawned.Count} objects.");
+    }
+
+    public void Unload()
+    {
+        // THE GOLDEN RULE: release everything we instantiated.
+        foreach (var handle in spawned)
+            if (handle.IsValid())
+                Addressables.ReleaseInstance(handle);   // destroys instance + drops ref count
+        spawned.Clear();
+    }
+
+    void OnDestroy() =&gt; Unload();   // safety net — never leak on scene teardown
+}</code></pre>
+
+                <p>Two design choices are worth calling out. First, the loop <code>await</code>s each spawn in turn for clarity; in production you'd often start all the loads and await them together (<code>Task.WhenAll</code>) so they overlap. Second, <code>Unload</code> and the <code>OnDestroy</code> safety net guarantee that no matter how the level ends — manual unload, scene change, object destruction — every <code>InstantiateAsync</code> gets its matching <code>ReleaseInstance</code>. That symmetry is the entire memory-safety story of the tool.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ <code>RuntimeKeyIsValid()</code> guards against empty markers</h4>
+                    <p>An <code>AssetReference</code> that was never assigned (or whose asset was deleted) has an invalid runtime key; instantiating it throws. Checking <code>marker.prefab.RuntimeKeyIsValid()</code> before loading skips those gracefully — cheap insurance for a designer-authored asset that might have holes.</p>
+                </div>
+            </section>
+
+            <section id="run" class="lesson-section">
+                <h2>Step 5 — Run It</h2>
+                <p>Wire the whole thing together with these numbered steps:</p>
+                <ol>
+                    <li><strong>Make prefabs Addressable.</strong> Select a few prefabs, tick <em>Addressable</em> in their Inspector, and give them readable addresses (e.g. <code>Props/Barrel</code>) in the <em>Window ▸ Asset Management ▸ Addressables ▸ Groups</em> window.</li>
+                    <li><strong>Create a layout asset.</strong> In the Project window, <em>Create ▸ Level Tools ▸ Level Layout</em>. This is the <code>LevelLayout</code> ScriptableObject you'll author into.</li>
+                    <li><strong>Open the tool.</strong> <em>Tools ▸ Level Layout Tool</em>. Drag your new layout asset into the <em>Layout Asset</em> field.</li>
+                    <li><strong>Stamp markers.</strong> Select a prefab in the list, move the Scene view so its pivot is where you want the object, and click <em>Stamp Marker at Scene View</em>. Repeat for several prefabs and positions, then click <em>Save</em>.</li>
+                    <li><strong>Add the loader.</strong> Create an empty GameObject in a scene, add the <code>LevelLoader</code> component, and assign your layout asset to its <em>Layout</em> field.</li>
+                    <li><strong>Play.</strong> On enter Play mode, <code>LevelLoader.Start</code> runs <code>LoadAsync</code>, and each marker's Addressable instantiates at its saved transform. On exit Play mode, <code>OnDestroy</code> releases every instance.</li>
+                </ol>
+
+                <blockquote>
+                    <strong>💡 Verify the release.</strong> Open the <em>Addressables Event Viewer</em> (<em>Window ▸ Asset Management ▸ Addressables ▸ Event Viewer</em>) while you enter and exit Play mode. You'll watch the reference counts rise as markers spawn and fall back to zero on unload — visible proof the golden rule from Lesson 7.3 is holding.
+                </blockquote>
+            </section>
+
+            <section id="built" class="lesson-section">
+                <h2>What You Built &amp; Extend It</h2>
+                <p>You've shipped a complete little content pipeline. An Editor tool that reads your Addressables catalog and lets a designer compose a level as data; a serializable asset that carries that composition from edit time to runtime with no Editor dependency; and a runtime loader that streams the content in asynchronously and — critically — releases all of it cleanly. Every idea from Module 7 shows up: the assembly boundary, the serialization/Undo discipline, UI Toolkit windows, Addressable loading, and the release rule.</p>
+
+                <div class="card card-accent">
+                    <h4>🚀 Extend it</h4>
+                    <ul>
+                        <li><strong>Visual gizmos.</strong> Add an editor script that draws a wireframe gizmo at each marker's position so the layout is visible in the Scene view before you press Play.</li>
+                        <li><strong>Drag to place.</strong> Replace "stamp at pivot" with a Scene-view raycast so you click directly on the ground to place a marker.</li>
+                        <li><strong>Parallel loading.</strong> Swap the sequential <code>await</code> loop for <code>Task.WhenAll</code> so all markers load concurrently, with a progress bar driven by each handle's <code>PercentComplete</code>.</li>
+                        <li><strong>Remote levels.</strong> Move the prefabs' group to <em>remote</em> and call <code>DownloadDependenciesAsync</code> before <code>LoadAsync</code> to preload the whole level behind a loading screen.</li>
+                        <li><strong>Edit &amp; remove.</strong> Add a second <code>ListView</code> of the current layout's markers with a "Delete" button, so authoring is round-trip, not append-only.</li>
+                    </ul>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: A "Clear Markers" button with Undo</h3>
+                    <p><strong>Objective:</strong> Extend the window with a destructive action that stays undoable.</p>
+                    <p>Add a <em>Clear All Markers</em> button to <code>LevelLayoutWindow</code> that empties <code>activeLayout.markers</code>. It must record Undo (so Ctrl+Z restores them) and mark the asset dirty so the cleared state saves.</p>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Mirror <code>StampSelected</code>: guard for a null layout, call <code>Undo.RecordObject(activeLayout, "Clear Markers")</code> <em>before</em> <code>activeLayout.markers.Clear()</code>, then <code>EditorUtility.SetDirty(activeLayout)</code>. The Undo record must come before the mutation or there's nothing to restore.</p>
+                    </details>
+                    <details>
+                        <summary>✅ Solution</summary>
+                        <pre><code class="language-csharp">var clearBtn = new Button(() =&gt;
+{
+    if (activeLayout == null) return;
+    Undo.RecordObject(activeLayout, "Clear Markers");  // record BEFORE mutating
+    activeLayout.markers.Clear();
+    EditorUtility.SetDirty(activeLayout);
+    statusLabel.text = "Cleared all markers.";
+}) { text = "Clear All Markers" };
+root.Add(clearBtn);</code></pre>
+                        <p>Because you recorded the object before clearing, Ctrl+Z restores the full marker list; because you set it dirty, the cleared state survives a save.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Guarantee no leaks under a stress test</h3>
+                    <p><strong>Objective:</strong> Prove the loader releases everything.</p>
+                    <p>Add a public <code>Reload()</code> method to <code>LevelLoader</code> that calls <code>Unload()</code> then <code>await LoadAsync()</code>. Then, from a test button, call <code>Reload()</code> 50 times in a loop. Using the Addressables Event Viewer (or Memory Profiler from Module 2), confirm the reference counts return to their baseline after the loop rather than climbing. Why does <code>Unload</code> before each reload matter?</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>Without the <code>Unload()</code> at the top of <code>Reload()</code>, each reload would <code>InstantiateAsync</code> a fresh set of instances while the previous set's handles stay in <code>spawned</code> — and, worse, get overwritten so they can never be released. Reference counts would climb 50× and the assets would pin memory for the session. With <code>Unload()</code> first, every prior <code>InstantiateAsync</code> gets its matching <code>ReleaseInstance</code> before the next batch spawns, so counts oscillate around a stable baseline. It's the load/release symmetry from Lesson 7.3, verified under stress.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Why is the <code>LevelLayout</code> a ScriptableObject storing an <code>AssetReference</code> rather than a direct prefab reference?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="ScriptableObjects aren't faster to serialize than plain classes here; that's not the reason.">A) ScriptableObjects serialize faster than other assets</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! An AssetReference stores an Addressables key, so the layout can be authored in the Editor yet loaded at runtime on demand — without hard-loading every prefab when the layout loads.">B) An <code>AssetReference</code> stores an Addressables key, so the layout carries runtime-safe data and content loads on demand — not all at once</button>
+                            <button class="quiz-option" data-correct="false" data-hint="A direct prefab reference would force every prefab to load with the layout — the memory problem Addressables solves.">C) A direct prefab reference would be identical in every way</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> Which file must live in an Editor folder / Editor asmdef?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="The loader is a runtime MonoBehaviour — it ships in the build.">A) <code>LevelLoader</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="The layout is runtime-safe serializable data — it ships too.">B) <code>LevelLayout</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! LevelLayoutWindow uses UnityEditor/EditorWindow, so it's Editor-only and must not ship in the build.">C) <code>LevelLayoutWindow</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> How does <code>LevelLoader</code> avoid leaking the objects it spawns?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Plain Destroy wouldn't drop the Addressables ref count — that's the leak.">A) It calls <code>Destroy()</code> on each object</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It stores every InstantiateAsync handle and calls Addressables.ReleaseInstance on each in Unload/OnDestroy — one release per load.">B) It stores each <code>InstantiateAsync</code> handle and calls <code>ReleaseInstance</code> on all of them in <code>Unload</code>/<code>OnDestroy</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Addressables doesn't auto-release instances you spawned; you own them.">C) Addressables releases everything automatically on scene change</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Inside <code>StampSelected</code>, why call <code>Undo.RecordObject</code> and <code>EditorUtility.SetDirty</code> around the marker addition?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Those calls are about persistence and Undo, not performance.">A) To make stamping run faster</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! RecordObject makes the change undoable and SetDirty ensures Unity saves the modified asset — the EditorWindow equivalent of Lesson 7.1's serializedObject brackets.">B) So the edit is undoable and Unity actually saves the modified asset</button>
+                            <button class="quiz-option" data-correct="false" data-hint="They don't touch Addressables reference counts at all.">C) To release the Addressable handle</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>You built a three-part tool: a <strong>ScriptableObject</strong> layout asset, an <strong>EditorWindow</strong> authoring tool, and a runtime <strong>LevelLoader</strong> — spanning both halves of Module 7.</li>
+                        <li>The <strong>layout asset</strong> stores only serializable, runtime-safe data (<code>AssetReference</code> + position + rotation), so it crosses the edit-time/runtime boundary cleanly.</li>
+                        <li>The <strong>window</strong> reads the Addressables settings to list placeable prefabs, and edits the asset through <code>Undo.RecordObject</code> + <code>EditorUtility.SetDirty</code> so changes are undoable and saved.</li>
+                        <li>The <strong>loader</strong> <code>InstantiateAsync</code>es each marker and <em>tracks every handle</em>, releasing them all with <code>ReleaseInstance</code> in <code>Unload</code>/<code>OnDestroy</code> — one release per load, no leaks.</li>
+                        <li>The <strong>assembly boundary</strong> decides what ships: the loader and layout are runtime; the window is Editor-only.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>Module 7 gave you the tools of a professional Unity engineer — a customizable Editor and disciplined content management. The final module makes sure what you build actually <em>works</em> and <em>ships</em>. In <strong>Lesson 8.1: The Unity Test Framework — Edit &amp; Play Mode Tests</strong>, you'll write automated tests for your game logic, the first step toward continuous integration and a confident release.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🏗️ You built a real pipeline tool</h3>
+                    <p>Authoring UI, a data asset, and an async runtime loader that never leaks — this is exactly the kind of internal tool studios live on. Module 7, complete.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_33.html" class="prev-lesson">← Previous: Addressables — Async Content Management</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_35.html" class="next-lesson">Next: The Unity Test Framework — Edit &amp; Play Mode Tests →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

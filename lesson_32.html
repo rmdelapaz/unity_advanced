@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Build your own dockable Editor tools. Add a [MenuItem], open an EditorWindow, and construct its interface the modern way with UI Toolkit — CreateGUI, rootVisualElement, and VisualElements like Label, Button, TextField, and ListView — compared against the classic IMGUI OnGUI approach, plus UXML/USS and data binding.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 7.2: EditorWindows with UI Toolkit — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 7: Editor Tooling &amp; Addressables</a></li>
+            <li aria-current="page">Lesson 7.2: EditorWindows with UI Toolkit</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🪟 Lesson 7.2: EditorWindows with UI Toolkit</h1>
+                <p class="lead">A custom Inspector reshapes a panel Unity already gives you. An <strong>EditorWindow</strong> is a blank canvas — a whole dockable window that you summon from a menu and fill with anything: a batch renamer, a level painter, a build dashboard, a data auditor. In this lesson you'll create one, hang it off a menu item, and build its interface with <strong>UI Toolkit</strong>, Unity's modern retained-mode UI. We'll contrast it with the classic IMGUI <code>OnGUI</code> approach so you know when each fits, then assemble a small working tool in pure C#.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Create an <code>EditorWindow</code> subclass and open it from a <code>[MenuItem]</code></li>
+                        <li>Contrast <strong>IMGUI</strong> (<code>OnGUI</code>, immediate mode) with <strong>UI Toolkit</strong> (<code>CreateGUI</code>, retained mode) and choose between them</li>
+                        <li>Build an interface in <code>CreateGUI()</code> by adding <code>VisualElement</code>s — <code>Label</code>, <code>Button</code>, <code>TextField</code>, <code>ListView</code> — to <code>rootVisualElement</code></li>
+                        <li>Explain when to author UI in <strong>UXML/USS</strong> versus building it in C#</li>
+                        <li>Wire up callbacks and basic <strong>data binding</strong></li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 70 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 7.1 (custom Editors, the Editor assembly boundary)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#window" class="toc-link">A Window from a Menu Item</a></li>
+                        <li><a href="#imgui-vs" class="toc-link">IMGUI vs. UI Toolkit</a></li>
+                        <li><a href="#creategui" class="toc-link">Building UI in CreateGUI</a></li>
+                        <li><a href="#elements" class="toc-link">The Core VisualElements</a></li>
+                        <li><a href="#uxml" class="toc-link">UXML/USS vs. C#-Built UI</a></li>
+                        <li><a href="#binding" class="toc-link">Callbacks &amp; Data Binding</a></li>
+                        <li><a href="#tool" class="toc-link">A Small Tool, End to End</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="window" class="lesson-section">
+                <h2>A Window from a Menu Item</h2>
+                <p>Every custom window is a class that derives from <code>EditorWindow</code>. To make it openable, you add a <strong>static</strong> method decorated with <code>[MenuItem]</code> that calls <code>GetWindow</code>. That's the whole entry point:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEditor;
+
+public class LevelToolWindow : EditorWindow
+{
+    // Adds "Tools/Level Tool" to Unity's main menu bar.
+    [MenuItem("Tools/Level Tool")]
+    public static void ShowWindow()
+    {
+        // GetWindow finds an existing instance or creates one, and focuses it.
+        var window = GetWindow&lt;LevelToolWindow&gt;();
+        window.titleContent = new GUIContent("Level Tool");
+        window.minSize = new Vector2(320, 240);
+    }
+}</code></pre>
+
+                <p><code>GetWindow&lt;T&gt;()</code> is deliberately idempotent: call it twice and you get the <em>same</em> window brought to focus, not two copies. The window is automatically dockable — the user can drag it beside the Inspector or Hierarchy like any built-in panel. Setting <code>titleContent</code> names its tab and <code>minSize</code> stops it collapsing to nothing. From here, the only question is how you fill it — and that's where the two UI systems diverge.</p>
+
+                <blockquote>
+                    <strong>💡 Menu paths are namespaced by their first segment.</strong> <code>"Tools/Level Tool"</code> puts your item under a top-level <em>Tools</em> menu. You can nest deeper (<code>"Tools/Level/Open Painter"</code>), add a priority number as a second argument to control ordering, and even add validation methods. Keeping your studio's tools under one <em>Tools</em> heading keeps the menu bar sane.
+                </blockquote>
+            </section>
+
+            <section id="imgui-vs" class="lesson-section">
+                <h2>IMGUI vs. UI Toolkit</h2>
+                <p>Unity has two Editor UI systems, and an <code>EditorWindow</code> can use either. Understanding the difference is the key decision of this lesson.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-accent pillar">
+                        <h4>🔁 IMGUI — immediate mode</h4>
+                        <p>You override <code>OnGUI()</code>, which runs <em>every repaint</em>. You re-issue every control each call: <code>if (GUILayout.Button("Go")) …</code>. There is no persistent UI tree — the interface is rebuilt from your code dozens of times a second. Quick for tiny tools; hard to scale and to style.</p>
+                    </div>
+                    <div class="card card-accent pillar">
+                        <h4>🌳 UI Toolkit — retained mode</h4>
+                        <p>You override <code>CreateGUI()</code>, which runs <em>once</em>. You build a persistent tree of <code>VisualElement</code>s that Unity keeps and redraws for you. It styles with USS (CSS-like), lays out with flexbox, and scales to complex tools. The modern, recommended path.</p>
+                    </div>
+                </div>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>Immediate mode</strong> (IMGUI): the UI has no lasting state; your code redraws the entire interface every frame, and a "button" is really "did a click land in this rectangle this frame?" <strong>Retained mode</strong> (UI Toolkit): the UI is a persistent object graph (like a web page's DOM); you build it once, mutate it when data changes, and the framework handles redrawing and events.</p>
+                </div>
+
+                <p>The mermaid diagram makes the shape of each explicit — IMGUI's loop versus UI Toolkit's build-once tree:</p>
+                <div class="mermaid">
+flowchart LR
+    subgraph IM["IMGUI — OnGUI() runs every repaint"]
+        direction TB
+        A1["repaint tick"] --> A2["OnGUI(): re-issue<br/>every control"] --> A3["draw"] --> A1
+    end
+    subgraph UT["UI Toolkit — CreateGUI() runs once"]
+        direction TB
+        B1["window opens"] --> B2["CreateGUI(): build<br/>VisualElement tree"] --> B3["tree retained"]
+        B3 --> B4["event / data change<br/>mutates one element"] --> B3
+    end
+    IM -->|"modern replacement"| UT
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 1: IMGUI rebuilds the whole UI every repaint from inside <code>OnGUI</code>; UI Toolkit builds a retained tree once in <code>CreateGUI</code> and only touches the parts that change. We teach UI Toolkit and mention IMGUI where you'll still meet it.</p>
+
+                <p>You still see IMGUI everywhere — the custom Inspector in Lesson 7.1 used it (<code>OnInspectorGUI</code> is immediate mode), and plenty of small tools live happily in <code>OnGUI</code>. But for a real window you'll maintain, UI Toolkit wins on structure, styling, and performance. The rest of this lesson is UI Toolkit.</p>
+            </section>
+
+            <section id="creategui" class="lesson-section">
+                <h2>Building UI in CreateGUI</h2>
+                <p>Override <code>CreateGUI()</code> instead of <code>OnGUI()</code>. Unity calls it once when the window opens, and hands you <code>rootVisualElement</code> — the root of your window's UI tree. You add children to it. Everything you build hangs off that root:</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEngine.UIElements;   // VisualElement, Label, Button, TextField...
+using UnityEditor;
+
+public class HelloToolWindow : EditorWindow
+{
+    [MenuItem("Tools/Hello Tool")]
+    public static void ShowWindow() =&gt; GetWindow&lt;HelloToolWindow&gt;("Hello Tool");
+
+    // Called ONCE when the window is created. Build the tree here.
+    public void CreateGUI()
+    {
+        VisualElement root = rootVisualElement;
+
+        var title = new Label("My First Tool");
+        title.style.fontSize = 16;
+        title.style.unityFontStyleAndWeight = FontStyle.Bold;
+        title.style.marginBottom = 8;
+        root.Add(title);
+
+        var nameField = new TextField("Level Name");
+        root.Add(nameField);
+
+        var button = new Button(() =&gt; Debug.Log($"Hello, {nameField.value}!"))
+        {
+            text = "Say Hello"
+        };
+        root.Add(button);
+    }
+}</code></pre>
+
+                <p>Read that as three nouns and one verb: create a <code>VisualElement</code>, set some style, <code>root.Add(...)</code> it. The button takes an <code>Action</code> in its constructor — the callback that runs on click — and reads the text field's live <code>.value</code> when clicked. No repaint loop, no rectangle math; the tree persists and Unity redraws it as needed. Styling is set through <code>.style</code> (individual properties, like inline CSS) — <code>marginBottom</code>, <code>fontSize</code>, flexbox <code>flexDirection</code>, and so on.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ <code>CreateGUI</code>, not <code>OnGUI</code>, and not a constructor</h4>
+                    <p>Build UI Toolkit trees in <code>CreateGUI()</code>. Don't build them in a constructor (the window isn't fully initialized) and don't mix them into <code>OnGUI()</code> (that's the IMGUI path). If you accidentally override <code>OnGUI</code>, Unity will happily call it and you'll be back in immediate mode without realizing it.</p>
+                </div>
+            </section>
+
+            <section id="elements" class="lesson-section">
+                <h2>The Core VisualElements</h2>
+                <p>A handful of built-in controls cover most tools. Each is a class you instantiate and <code>Add</code> to a parent:</p>
+                <ul>
+                    <li><strong><code>Label</code></strong> — static or updatable text. Set <code>.text</code>.</li>
+                    <li><strong><code>Button</code></strong> — takes a click <code>Action</code>; set <code>.text</code>. Also exposes a <code>.clicked</code> event you can subscribe to.</li>
+                    <li><strong><code>TextField</code></strong> — editable string. Read/write <code>.value</code>; listen with <code>RegisterValueChangedCallback</code>.</li>
+                    <li><strong><code>Toggle</code></strong>, <strong><code>IntegerField</code></strong>, <strong><code>FloatField</code></strong>, <strong><code>ObjectField</code></strong> — the typed cousins of <code>TextField</code>, each with a <code>.value</code>.</li>
+                    <li><strong><code>VisualElement</code></strong> — a plain container; set <code>style.flexDirection = FlexDirection.Row</code> to lay children out horizontally, the flexbox way.</li>
+                    <li><strong><code>ListView</code></strong> — the workhorse for showing many items efficiently (it recycles rows), which we'll use next.</li>
+                </ul>
+
+                <p><code>ListView</code> deserves special attention because it's how you display a collection without hand-drawing every row. You give it the backing data, a factory that <em>makes</em> one empty row element, and a binder that <em>fills</em> a row element for a given index:</p>
+                <pre><code class="language-csharp">// Backing data — any IList works.
+var items = new System.Collections.Generic.List&lt;string&gt;
+            { "Grasslands", "Cavern", "Fortress" };
+
+var list = new ListView
+{
+    itemsSource   = items,
+    fixedItemHeight = 20,
+    // makeItem: create ONE reusable row element (called ~ once per visible row).
+    makeItem      = () =&gt; new Label(),
+    // bindItem: fill a row element with the data at index i (called on scroll/refresh).
+    bindItem      = (element, i) =&gt; ((Label)element).text = items[i]
+};
+list.style.flexGrow = 1;               // fill remaining vertical space
+root.Add(list);</code></pre>
+
+                <p>The <code>makeItem</code>/<code>bindItem</code> split is the important idea: <code>ListView</code> creates only enough row elements to fill the visible area and <em>recycles</em> them as you scroll, rebinding each to new data. That's why it stays fast with thousands of items — the same lesson as ECS chunks and object pooling, applied to UI. Call <code>list.Rebuild()</code> (or <code>list.RefreshItems()</code>) after the backing list changes and the view catches up.</p>
+            </section>
+
+            <section id="uxml" class="lesson-section">
+                <h2>UXML/USS vs. C#-Built UI</h2>
+                <p>You've been building the tree in C#. UI Toolkit offers a second route: describe the layout declaratively in <strong>UXML</strong> (an XML markup, structurally like HTML) and its styling in <strong>USS</strong> (a stylesheet, structurally like CSS), then load them into your window. The same three controls as above, in UXML:</p>
+                <pre><code class="language-none">&lt;!-- LevelTool.uxml --&gt;
+&lt;ui:UXML xmlns:ui="UnityEngine.UIElements"&gt;
+    &lt;ui:Label text="My First Tool" class="title" /&gt;
+    &lt;ui:TextField label="Level Name" name="nameField" /&gt;
+    &lt;ui:Button text="Say Hello" name="helloButton" /&gt;
+&lt;/ui:UXML&gt;</code></pre>
+                <p>You load that asset and query elements by name to wire behaviour:</p>
+                <pre><code class="language-csharp">public void CreateGUI()
+{
+    // Load the UXML tree asset and clone it into our root.
+    var tree = AssetDatabase.LoadAssetAtPath&lt;VisualTreeAsset&gt;(
+                   "Assets/Editor/LevelTool.uxml");
+    tree.CloneTree(rootVisualElement);
+
+    // Find named elements and hook them up.
+    var nameField = rootVisualElement.Q&lt;TextField&gt;("nameField");
+    var button    = rootVisualElement.Q&lt;Button&gt;("helloButton");
+    button.clicked += () =&gt; Debug.Log($"Hello, {nameField.value}!");
+}</code></pre>
+
+                <p>The <code>Q&lt;T&gt;("name")</code> query is the bridge — it finds an element in the cloned tree by name and type, the same idea as a CSS selector. So which route do you pick?</p>
+
+                <div class="card card-accent">
+                    <h4>📖 When to choose which</h4>
+                    <ul>
+                        <li><strong>C#-built</strong> shines for small, dynamic tools where the layout <em>is</em> the logic, and for UI generated from data you don't know ahead of time. One file, no asset wrangling.</li>
+                        <li><strong>UXML + USS</strong> shines for larger, more visual tools: designers can edit layout and style without touching C#, styling is centralized and reusable, and Unity's <strong>UI Builder</strong> gives you a visual editor. It separates structure from behaviour the way web front-ends do.</li>
+                    </ul>
+                </div>
+
+                <p>Neither is wrong. For this module's mini-project we build in C# to keep everything in one place you can read top to bottom, but the moment a tool grows a real visual identity, UXML/USS is worth the extra files.</p>
+            </section>
+
+            <section id="binding" class="lesson-section">
+                <h2>Callbacks &amp; Data Binding</h2>
+                <p>Two mechanisms connect your UI to data. The first is the explicit <strong>callback</strong>: subscribe to a control's change event and run code. The second is <strong>binding</strong>: point a control at a serialized property so it reads and writes that data automatically, with Undo, exactly like Lesson 7.1's Inspector fields.</p>
+                <pre><code class="language-csharp">// (1) Explicit callback — react to a value change yourself.
+var radius = new FloatField("Radius");
+radius.RegisterValueChangedCallback(evt =&gt;
+    Debug.Log($"Radius changed from {evt.previousValue} to {evt.newValue}"));
+root.Add(radius);
+
+// (2) Binding — tie a field to serialized data; edits flow both ways + Undo.
+//     'so' is a SerializedObject wrapping some asset or component.
+var speed = new FloatField("Speed") { bindingPath = "moveSpeed" };
+root.Add(speed);
+root.Bind(so);   // now 'speed' reflects and edits so's "moveSpeed" property</code></pre>
+
+                <p>Binding is the same serialization pipeline you met in the last lesson, surfaced in UI Toolkit: set a control's <code>bindingPath</code> to a property name, call <code>root.Bind(serializedObject)</code>, and the control mirrors that property — showing prefab-override state, participating in Undo, and writing back on edit. Use explicit callbacks when you need to <em>run logic</em> on change; use binding when a control simply <em>is</em> a view of stored data.</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 640 470" role="img" aria-labelledby="winTitle winDesc">
+                        <title id="winTitle">A reconstructed UI Toolkit EditorWindow: the Level Tool</title>
+                        <desc id="winDesc">A mock of a dockable Editor window titled "Level Tool". At the top a bold title reads "Level Layout Tool". Below it a TextField labelled "Level Name" holds the value "Forest01". Under that, a ListView shows three rows — Grasslands, Cavern, Fortress — with the second row highlighted as selected. At the bottom, a horizontal row of two buttons reads "Add Marker" and "Save Layout".</desc>
+                        <rect x="0" y="0" width="640" height="470" rx="8" fill="#3b3f45"/>
+
+                        <!-- window tab bar -->
+                        <rect x="20" y="20" width="600" height="30" rx="6" fill="#2a2d33"/>
+                        <rect x="30" y="26" width="120" height="18" rx="4" fill="#3b3f45"/>
+                        <text x="90" y="39" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#e6e6e6">🪟 Level Tool</text>
+
+                        <!-- window body -->
+                        <rect x="20" y="50" width="600" height="400" rx="6" fill="#33373d" stroke="#22252a"/>
+
+                        <!-- title label -->
+                        <text x="40" y="86" font-family="'Segoe UI',sans-serif" font-size="16" font-weight="700" fill="#dfe8ff">Level Layout Tool</text>
+
+                        <!-- TextField -->
+                        <text x="40" y="122" font-family="'Segoe UI',sans-serif" font-size="12" fill="#c9d1db">Level Name</text>
+                        <rect x="180" y="110" width="420" height="22" rx="3" fill="#26292e" stroke="#4a4f57"/>
+                        <text x="192" y="125" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">Forest01</text>
+
+                        <!-- ListView label -->
+                        <text x="40" y="164" font-family="'Segoe UI',sans-serif" font-size="12" fill="#9aa4b0">Addressable Prefabs</text>
+
+                        <!-- ListView box -->
+                        <rect x="40" y="174" width="560" height="180" rx="4" fill="#26292e" stroke="#4a4f57"/>
+                        <!-- row 1 -->
+                        <rect x="42" y="176" width="556" height="34" fill="#2b2f35"/>
+                        <text x="58" y="198" font-family="'Segoe UI',sans-serif" font-size="12" fill="#d6dde6">🧩 Grasslands</text>
+                        <!-- row 2 (selected) -->
+                        <rect x="42" y="210" width="556" height="34" fill="#3a5f8a"/>
+                        <text x="58" y="232" font-family="'Segoe UI',sans-serif" font-size="12" fill="#ffffff">🧩 Cavern</text>
+                        <!-- row 3 -->
+                        <rect x="42" y="244" width="556" height="34" fill="#2b2f35"/>
+                        <text x="58" y="266" font-family="'Segoe UI',sans-serif" font-size="12" fill="#d6dde6">🧩 Fortress</text>
+                        <!-- empty rows -->
+                        <rect x="42" y="278" width="556" height="34" fill="#26292e"/>
+                        <rect x="42" y="312" width="556" height="40" fill="#26292e"/>
+                        <text x="320" y="336" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#5c636d">ListView recycles row elements as you scroll</text>
+
+                        <!-- button row (flexDirection Row) -->
+                        <rect x="40" y="372" width="278" height="34" rx="5" fill="#4a5160" stroke="#6b7382"/>
+                        <text x="179" y="394" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" fill="#e6e6e6">Add Marker</text>
+                        <rect x="326" y="372" width="274" height="34" rx="5" fill="#3a5f8a" stroke="#5b86bd"/>
+                        <text x="463" y="394" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#ffffff">Save Layout</text>
+
+                        <!-- caption strip -->
+                        <text x="320" y="432" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#7f8791">Label · TextField · ListView · Button — all VisualElements added to rootVisualElement</text>
+                    </svg>
+                    <figcaption>Figure 2: A reconstructed UI Toolkit <code>EditorWindow</code> (UI Toolkit panels can't be captured cleanly, so this is drawn from the code). A <code>Label</code> title, a <code>TextField</code>, a scrolling <code>ListView</code> of items with one selected, and a horizontal row of two <code>Button</code>s — the exact controls we assemble for the Module 7 mini-project.</figcaption>
+                </figure>
+            </section>
+
+            <section id="tool" class="lesson-section">
+                <h2>A Small Tool, End to End</h2>
+                <p>Here is a complete, compilable window that ties the pieces together: a title, a text field, a <code>ListView</code> populated from a list, and a button that appends to it and refreshes the view. It is the skeleton the mini-project (Lesson 7.4) grows into.</p>
+                <pre><code class="language-csharp">using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UIElements;
+using UnityEditor;
+
+public class LevelToolWindow : EditorWindow
+{
+    readonly List&lt;string&gt; entries = new() { "Grasslands", "Cavern", "Fortress" };
+    ListView list;
+
+    [MenuItem("Tools/Level Tool")]
+    public static void ShowWindow()
+    {
+        var w = GetWindow&lt;LevelToolWindow&gt;();
+        w.titleContent = new GUIContent("Level Tool");
+        w.minSize = new Vector2(320, 260);
+    }
+
+    public void CreateGUI()
+    {
+        var root = rootVisualElement;
+        root.style.paddingTop = root.style.paddingLeft =
+            root.style.paddingRight = root.style.paddingBottom = 8;
+
+        var title = new Label("Level Layout Tool");
+        title.style.fontSize = 16;
+        title.style.unityFontStyleAndWeight = FontStyle.Bold;
+        title.style.marginBottom = 8;
+        root.Add(title);
+
+        var nameField = new TextField("Level Name") { value = "Forest01" };
+        root.Add(nameField);
+
+        list = new ListView(entries, 20,
+            makeItem: () =&gt; new Label(),
+            bindItem: (e, i) =&gt; ((Label)e).text = "🧩 " + entries[i]);
+        list.selectionType = SelectionType.Single;
+        list.style.flexGrow = 1;
+        list.style.marginTop = 6;
+        root.Add(list);
+
+        // A horizontal button row (flexbox).
+        var row = new VisualElement();
+        row.style.flexDirection = FlexDirection.Row;
+        row.style.marginTop = 6;
+
+        var addBtn = new Button(() =&gt;
+        {
+            entries.Add("New Region " + entries.Count);
+            list.Rebuild();               // refresh the view after data changes
+        }) { text = "Add Marker" };
+        addBtn.style.flexGrow = 1;
+
+        var saveBtn = new Button(() =&gt;
+            Debug.Log($"Saving '{nameField.value}' with {entries.Count} entries."))
+            { text = "Save Layout" };
+        saveBtn.style.flexGrow = 1;
+
+        row.Add(addBtn);
+        row.Add(saveBtn);
+        root.Add(row);
+    }
+}</code></pre>
+
+                <p>Drop that in an <code>Editor</code> folder, open <em>Tools ▸ Level Tool</em>, and you have the window in Figure 2 — dockable, resizable, and reacting to clicks. Every piece is a <code>VisualElement</code> added to <code>rootVisualElement</code>; the button callbacks mutate the backing list and call <code>Rebuild()</code>. That's the entire UI Toolkit loop, and it's all you need for real tools.</p>
+
+                <div class="card card-success">
+                    <h4>✅ It's the Editor boundary again</h4>
+                    <p>This whole file uses <code>UnityEditor</code> and <code>EditorWindow</code>, so — exactly as in Lesson 7.1 — it must live in an <strong>Editor folder or Editor-only asmdef</strong>. An EditorWindow that leaks into a runtime assembly will break your player build.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: A batch-rename window</h3>
+                    <p><strong>Objective:</strong> Build a genuinely useful tool with the controls from this lesson.</p>
+                    <p>Create a <code>BatchRenameWindow : EditorWindow</code>, opened from <code>Tools ▸ Batch Rename</code>, that:</p>
+                    <ol>
+                        <li>Has a <code>TextField</code> for a base name and an <code>IntegerField</code> for a starting index.</li>
+                        <li>Shows a <code>ListView</code> of the names of the currently selected GameObjects (<code>Selection.gameObjects</code>).</li>
+                        <li>Has a "Rename" button that renames each selected object to <code>base + (start + i)</code>, recording Undo with <code>Undo.RecordObject</code> so the rename is undoable.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Build everything in <code>CreateGUI</code>. For the list, set <code>itemsSource = Selection.gameObjects</code> and rebuild it whenever the selection changes — subscribe in <code>OnEnable</code>: <code>Selection.selectionChanged += () =&gt; list.Rebuild();</code> and unsubscribe in <code>OnDisable</code>. In the Rename callback, loop the selected objects and call <code>Undo.RecordObject(go, "Batch Rename"); go.name = baseField.value + (startField.value + i);</code>.</p>
+                    </details>
+                    <details>
+                        <summary>✅ Solution sketch</summary>
+                        <pre><code class="language-csharp">public class BatchRenameWindow : EditorWindow
+{
+    [MenuItem("Tools/Batch Rename")]
+    static void Open() =&gt; GetWindow&lt;BatchRenameWindow&gt;("Batch Rename");
+
+    TextField baseField;
+    IntegerField startField;
+    ListView list;
+
+    public void CreateGUI()
+    {
+        var root = rootVisualElement;
+        baseField  = new TextField("Base Name") { value = "Enemy_" };
+        startField = new IntegerField("Start Index") { value = 0 };
+        root.Add(baseField);
+        root.Add(startField);
+
+        list = new ListView(Selection.gameObjects, 18,
+            () =&gt; new Label(),
+            (e, i) =&gt; ((Label)e).text = Selection.gameObjects[i].name);
+        list.style.flexGrow = 1;
+        root.Add(list);
+
+        var go = new Button(Rename) { text = "Rename" };
+        root.Add(go);
+    }
+
+    void OnEnable()  =&gt; Selection.selectionChanged += Refresh;
+    void OnDisable() =&gt; Selection.selectionChanged -= Refresh;
+    void Refresh()   { if (list != null) { list.itemsSource = Selection.gameObjects; list.Rebuild(); } }
+
+    void Rename()
+    {
+        var objs = Selection.gameObjects;
+        for (int i = 0; i &lt; objs.Length; i++)
+        {
+            Undo.RecordObject(objs[i], "Batch Rename");
+            objs[i].name = baseField.value + (startField.value + i);
+        }
+    }
+}</code></pre>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Callback vs. binding</h3>
+                    <p>For each need, say whether an explicit <code>RegisterValueChangedCallback</code> or a <code>bindingPath</code> binding is the better fit: (a) a <code>Toggle</code> that should enable/disable a preview in the scene the instant it changes; (b) a <code>FloatField</code> that simply views and edits a ScriptableObject's <code>spawnRate</code> with Undo; (c) a <code>TextField</code> whose new value must be validated (rejected if it contains spaces).</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>Callback</strong> — you must run logic (toggle the preview) on change. (b) <strong>Binding</strong> — it's a plain view/edit of stored data; <code>bindingPath = "spawnRate"</code> plus <code>root.Bind(so)</code> gives you two-way sync and Undo with no code. (c) <strong>Callback</strong> — validation is logic; register a change callback and reject or clean the value there.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> How do you make an <code>EditorWindow</code> openable from Unity's menu bar?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Windows aren't opened from Start — that's runtime MonoBehaviour code.">A) Call <code>ShowWindow()</code> from a MonoBehaviour's <code>Start</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A static method tagged [MenuItem(\"Tools/…\")] that calls GetWindow<T>() adds the menu entry and opens the window.">B) A static method tagged <code>[MenuItem]</code> that calls <code>GetWindow&lt;T&gt;()</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="There's no such attribute; menu items use [MenuItem].">C) Add an <code>[EditorMenu]</code> attribute to the class</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> What's the core difference between IMGUI and UI Toolkit?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Both run only in the Editor for editor tools; that's not the distinction.">A) IMGUI works at runtime, UI Toolkit doesn't</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! IMGUI is immediate mode — OnGUI redraws everything every repaint. UI Toolkit is retained mode — CreateGUI builds a persistent VisualElement tree once.">B) IMGUI redraws everything every repaint (immediate); UI Toolkit builds a persistent tree once (retained)</button>
+                            <button class="quiz-option" data-correct="false" data-hint="UI Toolkit is the newer, recommended system, not the legacy one.">C) UI Toolkit is the older system being phased out</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> In UI Toolkit, where do you build the window's interface and what do you attach it to?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Override CreateGUI() (called once) and add your VisualElements to rootVisualElement.">A) In <code>CreateGUI()</code>, adding <code>VisualElement</code>s to <code>rootVisualElement</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="OnGUI is the IMGUI path; that's immediate mode, not UI Toolkit.">B) In <code>OnGUI()</code>, issuing <code>GUILayout</code> calls</button>
+                            <button class="quiz-option" data-correct="false" data-hint="The constructor runs before the window is ready; build in CreateGUI instead.">C) In the constructor, adding to <code>this.gameObject</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Why does <code>ListView</code> stay fast with thousands of items?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't hide data; it just doesn't create an element per item.">A) It only ever shows the first few items and drops the rest</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! makeItem creates only enough row elements to fill the visible area; bindItem rebinds them to new data as you scroll — element recycling, like object pooling.">B) It creates only enough row elements to fill the view and recycles them via <code>makeItem</code>/<code>bindItem</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Burst compiles jobs, not editor UI.">C) It's Burst-compiled</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>An <strong>EditorWindow</strong> is a dockable custom window; open it with a static <code>[MenuItem]</code> method that calls <code>GetWindow&lt;T&gt;()</code>.</li>
+                        <li><strong>IMGUI</strong> (<code>OnGUI</code>) is immediate mode — redraw everything every repaint. <strong>UI Toolkit</strong> (<code>CreateGUI</code>) is retained mode — build a persistent tree once. Prefer UI Toolkit.</li>
+                        <li>In <code>CreateGUI()</code>, add <code>VisualElement</code>s — <code>Label</code>, <code>Button</code>, <code>TextField</code>, <code>ListView</code> — to <code>rootVisualElement</code>; style via <code>.style</code> and lay out with flexbox.</li>
+                        <li><code>ListView</code> recycles row elements through <code>makeItem</code>/<code>bindItem</code>, staying fast with large collections.</li>
+                        <li><strong>UXML/USS</strong> describe layout and style declaratively (great for larger, visual, designer-editable tools); <strong>C#-built</strong> UI is great for small, dynamic, data-driven tools.</li>
+                        <li>Use explicit <strong>callbacks</strong> to run logic on change; use <strong>binding</strong> (<code>bindingPath</code> + <code>root.Bind</code>) when a control just views serialized data — with Undo, like Lesson 7.1.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You can now build any tool window you can imagine — but a level tool needs <em>content</em> to place, and loading a hundred prefabs the naive way blows your memory budget. In <strong>Lesson 7.3: Addressables — Async Content Management</strong>, you'll learn to load assets on demand, asynchronously, and release them cleanly — the system the mini-project's tool will drive.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🪟 You build the tools now</h3>
+                    <p>Menu item, window, a tree of VisualElements — that's the whole recipe. Every custom pipeline tool a studio relies on starts exactly here.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_31.html" class="prev-lesson">← Previous: Custom Inspectors &amp; Property Drawers</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_33.html" class="next-lesson">Next: Addressables — Async Content Management →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Four design patterns that scale: the Command pattern for undo/redo and input buffering, a code-level State machine with an IState interface, the Service Locator as a central registry, and an Event Bus for decoupled pub/sub. Concise C# for each, with the trade-offs against DI.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 1.4: Scaling Design Patterns — Command, State, Service Locator &amp; Event Bus — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 1: Advanced Architecture &amp; Async</a></li>
+            <li aria-current="page">Lesson 1.4: Scaling Design Patterns — Command, State, Service Locator &amp; Event Bus</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🧩 Lesson 1.4: Scaling Design Patterns — Command, State, Service Locator &amp; Event Bus</h1>
+                <p class="lead">Patterns are named solutions to problems that recur so often they've earned a vocabulary. You've met a few implicitly — the ScriptableObject-event pattern in Intermediate, the composition root in Lesson 1.2. This lesson gives you four more that specifically help code <em>scale</em>: <strong>Command</strong> (turn actions into objects you can queue, undo, and replay), <strong>State</strong> (a clean code-level finite state machine), <strong>Service Locator</strong> (a central registry, revisited with its trade-offs), and the <strong>Event Bus</strong> (decoupled publish/subscribe messaging). Each comes with concise C# you can lift into a project today.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Encapsulate actions as <strong>Command</strong> objects and use them for undo/redo and input buffering</li>
+                        <li>Build a code-level <strong>finite state machine</strong> with an <code>IState</code> interface, and relate it to the Animator FSM from Intermediate</li>
+                        <li>Implement a <strong>Service Locator</strong> and judge it honestly against DI from Lesson 1.2</li>
+                        <li>Decouple systems with an <strong>Event Bus</strong> — one publisher, many unaware subscribers</li>
+                        <li>Pick the right pattern for a given scaling problem rather than reaching for the same tool every time</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 65 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lessons 1.1–1.2; comfort with interfaces, delegates, and generics</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Patterns, and Which Four</a></li>
+                        <li><a href="#command" class="toc-link">Command</a></li>
+                        <li><a href="#state" class="toc-link">State (a Code-Level FSM)</a></li>
+                        <li><a href="#locator" class="toc-link">Service Locator</a></li>
+                        <li><a href="#eventbus" class="toc-link">Event Bus</a></li>
+                        <li><a href="#choosing" class="toc-link">Choosing Between Them</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Patterns, and Which Four</h2>
+                <p>A design pattern isn't a library you install; it's a <em>shape</em> you recognize and reproduce. Its value is twofold: it's a proven structure for a recurring problem, and it's a shared name so a teammate instantly knows what you built. The risk is over-application — patterns add indirection, and indirection you don't need is just complexity. The skill is matching the pattern to a real pressure.</p>
+                <p>These four each answer a specific scaling pressure:</p>
+                <ul>
+                    <li><strong>Command</strong> — when you need to treat "an action" as data: queue it, log it, undo it, replay it.</li>
+                    <li><strong>State</strong> — when an object's behavior depends on a mode and the <code>if</code>/<code>switch</code> soup is getting unmanageable.</li>
+                    <li><strong>Service Locator</strong> — when many systems need shared services and you want one place to find them (with eyes open about the cost).</li>
+                    <li><strong>Event Bus</strong> — when a change in one system must notify many others that shouldn't know about each other.</li>
+                </ul>
+            </section>
+
+            <section id="command" class="lesson-section">
+                <h2>Command</h2>
+                <p>The <strong>Command</strong> pattern turns a method call into an object. Instead of calling <code>player.Jump()</code> directly, you create a <code>JumpCommand</code> and execute it. That reification unlocks everything you can do with objects but not with raw calls: store them in a list, send them over a network, and — because a command can also know how to <em>reverse</em> itself — undo them.</p>
+                <pre><code class="language-csharp">public interface ICommand
+{
+    void Execute();
+    void Undo();
+}
+
+public class MoveCommand : ICommand
+{
+    private readonly Transform _t;
+    private readonly Vector3 _delta;
+    public MoveCommand(Transform t, Vector3 delta) { _t = t; _delta = delta; }
+
+    public void Execute() =&gt; _t.position += _delta;
+    public void Undo()    =&gt; _t.position -= _delta;   // the inverse
+}</code></pre>
+                <p>An <strong>invoker</strong> keeps a history stack, giving you undo/redo almost for free — the core of any level editor or turn-based game:</p>
+                <pre><code class="language-csharp">public class CommandInvoker
+{
+    private readonly Stack&lt;ICommand&gt; _undo = new();
+    private readonly Stack&lt;ICommand&gt; _redo = new();
+
+    public void Execute(ICommand cmd)
+    {
+        cmd.Execute();
+        _undo.Push(cmd);
+        _redo.Clear();          // a new action invalidates the redo branch
+    }
+
+    public void Undo()
+    {
+        if (_undo.Count == 0) return;
+        var cmd = _undo.Pop();
+        cmd.Undo();
+        _redo.Push(cmd);
+    }
+
+    public void Redo()
+    {
+        if (_redo.Count == 0) return;
+        var cmd = _redo.Pop();
+        cmd.Execute();
+        _undo.Push(cmd);
+    }
+}</code></pre>
+                <p>The same reification powers <strong>input buffering</strong>: in a fighting game you enqueue commands as inputs arrive and execute them when the character is ready, so a slightly-early button press still lands. Because commands are just data, you can also record a replay (a list of commands + timings) or send them across the wire — a preview of the RPC thinking in Module 6.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition</h4>
+                    <p><strong>Command</strong>: encapsulate a request as an object, so requests can be parameterized, queued, logged, and undone. The three roles are the <em>command</em> (knows how to do and undo one thing), the <em>invoker</em> (triggers commands and keeps history), and the <em>receiver</em> (the object the command acts on).</p>
+                </div>
+            </section>
+
+            <section id="state" class="lesson-section">
+                <h2>State (a Code-Level FSM)</h2>
+                <p>You already know finite state machines from the <strong>Animator</strong> in Intermediate — states with entry/exit and transitions between them. The <strong>State</strong> pattern is that same idea in <em>code</em>, for game logic rather than animation: an enemy that is Patrolling, then Chasing, then Attacking; a game that is in Menu, Playing, or Paused. Rather than a growing tangle of booleans and <code>if</code>s, each state becomes its own class behind an interface.</p>
+                <pre><code class="language-csharp">public interface IState
+{
+    void Enter();
+    void Tick();     // called each frame while active
+    void Exit();
+}
+
+public class StateMachine
+{
+    private IState _current;
+
+    public void ChangeState(IState next)
+    {
+        _current?.Exit();     // clean up the old state
+        _current = next;
+        _current.Enter();     // set up the new one
+    }
+
+    public void Tick() =&gt; _current?.Tick();
+}</code></pre>
+                <p>Each state owns its own behavior and decides when to hand off:</p>
+                <pre><code class="language-csharp">public class PatrolState : IState
+{
+    private readonly Enemy _enemy;
+    private readonly StateMachine _fsm;
+    public PatrolState(Enemy e, StateMachine fsm) { _enemy = e; _fsm = fsm; }
+
+    public void Enter() =&gt; _enemy.PlayAnim("Walk");
+    public void Exit()  { }
+
+    public void Tick()
+    {
+        _enemy.FollowWaypoints();
+        if (_enemy.CanSeePlayer())
+            _fsm.ChangeState(new ChaseState(_enemy, _fsm));   // transition
+    }
+}</code></pre>
+                <p>The payoff is the same as the Animator's: adding an <code>AttackState</code> doesn't touch the others, each state's logic lives in one place, and the transitions are explicit calls you can read. It's the code cousin of the animation FSM — same mental model, applied to gameplay.</p>
+
+                <blockquote>
+                    <strong>💡 When to graduate to it.</strong> One or two modes? A simple <code>enum</code> and a <code>switch</code> is fine — don't over-engineer. Reach for the State pattern when the number of modes, per-mode data, and transition rules grow past what a single <code>switch</code> can hold clearly. That inflection point is where it earns its indirection.
+                </blockquote>
+            </section>
+
+            <section id="locator" class="lesson-section">
+                <h2>Service Locator</h2>
+                <p>The <strong>Service Locator</strong> is a central registry that hands out shared services on request. You met it in Lesson 1.2 as DI's compromised cousin; here's the pattern itself, stated plainly, plus when it's a legitimate choice.</p>
+                <pre><code class="language-csharp">public static class ServiceLocator
+{
+    private static readonly Dictionary&lt;Type, object&gt; _services = new();
+
+    public static void Register&lt;T&gt;(T service) =&gt; _services[typeof(T)] = service;
+
+    public static T Get&lt;T&gt;()
+    {
+        if (_services.TryGetValue(typeof(T), out var s)) return (T)s;
+        throw new InvalidOperationException($"No service registered for {typeof(T).Name}");
+    }
+}
+
+// Register once at startup (the composition root):
+ServiceLocator.Register&lt;IAudioService&gt;(new AudioService());
+
+// Fetch anywhere:
+ServiceLocator.Get&lt;IAudioService&gt;().Play("footstep");</code></pre>
+                <p>Its appeal is real: minimal wiring, easy to add to an existing codebase, and — crucially, unlike a raw singleton — consumers depend on <code>IAudioService</code>, so implementations remain swappable and fakeable.</p>
+
+                <div class="card card-warning">
+                    <h4>⚠️ The trade-off vs DI</h4>
+                    <p>The locator is <em>pulled</em> from, so dependencies stay <strong>hidden</strong>: a class using <code>ServiceLocator.Get</code> reveals nothing in its signature about what it needs, and a test must populate the global registry before that class runs. True DI (Lesson 1.2) <em>pushes</em> dependencies in, making them explicit and the class trivially testable. Rule of thumb: prefer injection for your own gameplay classes; a Service Locator is a defensible pragmatic choice for cross-cutting services (logging, analytics) or when retrofitting into code that wasn't built for DI.</p>
+                </div>
+            </section>
+
+            <section id="eventbus" class="lesson-section">
+                <h2>Event Bus</h2>
+                <p>The <strong>Event Bus</strong> (a.k.a. message bus) is the decoupling powerhouse. A publisher raises an event without knowing who — if anyone — listens; subscribers react without knowing who raised it. When the player dies, one <code>Publish(new PlayerDied())</code> can update the UI, stop the music, trigger a respawn timer, and record analytics — none of those systems aware of each other or of the player.</p>
+                <pre><code class="language-csharp">public interface IEvent { }
+
+public static class EventBus
+{
+    private static readonly Dictionary&lt;Type, Delegate&gt; _handlers = new();
+
+    public static void Subscribe&lt;T&gt;(Action&lt;T&gt; handler) where T : IEvent
+    {
+        _handlers.TryGetValue(typeof(T), out var d);
+        _handlers[typeof(T)] = (Action&lt;T&gt;)d + handler;   // combine delegates
+    }
+
+    public static void Unsubscribe&lt;T&gt;(Action&lt;T&gt; handler) where T : IEvent
+    {
+        if (_handlers.TryGetValue(typeof(T), out var d))
+            _handlers[typeof(T)] = (Action&lt;T&gt;)d - handler;
+    }
+
+    public static void Publish&lt;T&gt;(T evt) where T : IEvent
+    {
+        if (_handlers.TryGetValue(typeof(T), out var d))
+            ((Action&lt;T&gt;)d)?.Invoke(evt);                 // fan out to all subscribers
+    }
+}
+
+// An event is just a data payload:
+public struct PlayerDied : IEvent { public int Score; }
+
+// Many unaware subscribers:
+EventBus.Subscribe&lt;PlayerDied&gt;(e =&gt; ui.ShowGameOver(e.Score));
+EventBus.Subscribe&lt;PlayerDied&gt;(e =&gt; audio.StopMusic());
+
+// One publisher, ignorant of all of them:
+EventBus.Publish(new PlayerDied { Score = 4200 });</code></pre>
+                <p>One <code>Publish</code> fans out to every subscriber. Here's that fan-out drawn out — the shape that makes the bus worth its indirection:</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 420" role="img" aria-labelledby="busTitle busDesc">
+                        <title id="busTitle">An event bus fanning one event out to many decoupled listeners</title>
+                        <desc id="busDesc">On the left, a single Player publisher sends one PlayerDied event into a central Event Bus box. From the Event Bus, arrows fan out to four independent subscribers on the right — a UI system, an Audio system, a Respawn timer, and an Analytics logger. The publisher connects only to the bus, and each subscriber connects only to the bus; no publisher-to-subscriber arrows exist, illustrating that none of them know about each other.</desc>
+
+                        <rect x="0" y="0" width="900" height="420" rx="8" fill="#22262d"/>
+
+                        <!-- publisher -->
+                        <rect x="30" y="176" width="130" height="64" rx="8" fill="#3a4b63" stroke="#5b76a0"/>
+                        <text x="95" y="204" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="14" font-weight="700" fill="#fff">Player</text>
+                        <text x="95" y="224" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#cfe0ff">publisher</text>
+
+                        <!-- event payload pill -->
+                        <rect x="188" y="192" width="118" height="32" rx="16" fill="#4a2f5a" stroke="#8a58a0"/>
+                        <text x="247" y="213" text-anchor="middle" font-family="'Consolas',monospace" font-size="10.5" fill="#e0c8ff">PlayerDied</text>
+
+                        <!-- bus -->
+                        <rect x="352" y="150" width="150" height="120" rx="10" fill="#5a4a2f" stroke="#a08048"/>
+                        <text x="427" y="200" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="15" font-weight="700" fill="#fff">Event Bus</text>
+                        <text x="427" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ffe6b8">Publish → fan out</text>
+
+                        <defs>
+                            <marker id="abus" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                                <path d="M0 0 L10 5 L0 10 z" fill="#ffd79a"/>
+                            </marker>
+                        </defs>
+
+                        <!-- publisher -> bus -->
+                        <line x1="306" y1="208" x2="350" y2="208" stroke="#ffd79a" stroke-width="2.6" marker-end="url(#abus)"/>
+
+                        <!-- subscribers -->
+                        <rect x="700" y="40" width="170" height="52" rx="8" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="785" y="66" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#fff">UI</text>
+                        <text x="785" y="82" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#bfe6cf">ShowGameOver()</text>
+
+                        <rect x="700" y="118" width="170" height="52" rx="8" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="785" y="144" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#fff">Audio</text>
+                        <text x="785" y="160" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#bfe6cf">StopMusic()</text>
+
+                        <rect x="700" y="196" width="170" height="52" rx="8" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="785" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#fff">Respawn Timer</text>
+                        <text x="785" y="238" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#bfe6cf">Begin(3s)</text>
+
+                        <rect x="700" y="274" width="170" height="52" rx="8" fill="#2f5d46" stroke="#4f9e77"/>
+                        <text x="785" y="300" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="13" font-weight="700" fill="#fff">Analytics</text>
+                        <text x="785" y="316" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#bfe6cf">Track("death")</text>
+
+                        <!-- bus -> subscribers (fan out) -->
+                        <g stroke="#ffd79a" stroke-width="2.4" fill="none">
+                            <path d="M502 175 C 600 120, 640 80, 698 66" marker-end="url(#abus)"/>
+                            <path d="M502 195 C 600 175, 640 150, 698 144" marker-end="url(#abus)"/>
+                            <path d="M502 225 C 600 200, 640 216, 698 222" marker-end="url(#abus)"/>
+                            <path d="M502 245 C 600 260, 640 290, 698 300" marker-end="url(#abus)"/>
+                        </g>
+
+                        <text x="427" y="330" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">the publisher knows only the bus; each subscriber knows only the bus</text>
+                        <text x="427" y="352" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#8f9aa8">no direct publisher → subscriber references anywhere</text>
+                    </svg>
+                    <figcaption>Figure 1: One event, many listeners. The <strong style="color:#5b76a0">Player</strong> publishes a single <code>PlayerDied</code> into the <strong style="color:#ffd79a">Event Bus</strong>, which fans it out to four <strong style="color:#4f9e77">subscribers</strong>. Because everyone talks only to the bus, you can add or remove a subscriber (say, a new "record high score" system) without touching the publisher or the others — the essence of decoupling.</figcaption>
+                </figure>
+
+                <div class="card card-warning">
+                    <h4>⚠️ The cost of decoupling: unsubscribe, and traceability</h4>
+                    <p>Two hazards. First, <strong>always unsubscribe</strong> (typically in <code>OnDisable</code>/<code>OnDestroy</code>) — a static bus holding a delegate to a destroyed object is a memory leak and a null-reference waiting to fire. Second, an event bus makes "who reacts to this?" harder to trace: the flow is invisible in the call graph. Use it for genuinely broadcast, many-to-many notifications; don't route point-to-point calls through it just to feel decoupled.</p>
+                </div>
+            </section>
+
+            <section id="choosing" class="lesson-section">
+                <h2>Choosing Between Them</h2>
+                <p>Patterns are tools, not trophies. A quick decision guide:</p>
+                <ul>
+                    <li>Need to <strong>queue, log, undo, or replay actions</strong>? → <strong>Command</strong>.</li>
+                    <li>An object's behavior <strong>switches by mode</strong> and the branching is sprawling? → <strong>State</strong>.</li>
+                    <li>Many systems need a <strong>shared service</strong> and you accept hidden dependencies for less wiring? → <strong>Service Locator</strong> (but prefer DI for your own code).</li>
+                    <li>One change must <strong>notify many unrelated systems</strong>? → <strong>Event Bus</strong>.</li>
+                </ul>
+                <p>They compose. The Module 1 mini-project (Lesson 1.5) wires services through a container (DI/locator hybrid), and a real game would layer a State machine for game flow and an Event Bus for cross-system notifications on top. The goal is never "use all the patterns" — it's to recognize the pressure and reach for the shape that relieves it.</p>
+
+                <div class="card card-success">
+                    <h4>✅ The meta-rule</h4>
+                    <p>Introduce a pattern when the pain it removes is <em>already present</em>, not in anticipation. A pattern applied to a problem you don't yet have is just indirection you'll have to read past forever. Let the code tell you when it's ready.</p>
+                </div>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Undo/redo with Command</h3>
+                    <p><strong>Objective:</strong> Build a tiny editor-style tool with working undo and redo.</p>
+                    <ol>
+                        <li>Implement <code>ICommand</code> with <code>Execute()</code> and <code>Undo()</code>, plus a <code>SpawnCommand</code> that instantiates an object on execute and destroys it on undo.</li>
+                        <li>Use the <code>CommandInvoker</code> from this lesson. Bind keys: click to spawn (execute), Ctrl+Z to undo, Ctrl+Y to redo.</li>
+                        <li>Spawn three objects, undo twice, redo once, then spawn a new one — confirm the redo stack clears.</li>
+                    </ol>
+                    <details>
+                        <summary>✅ What to verify</summary>
+                        <p>Undo destroys the most recently spawned object and pushes the command to the redo stack; redo re-spawns it. After undoing and then executing a <em>new</em> command, the redo stack is cleared (you branched history) — which is why <code>Execute()</code> calls <code>_redo.Clear()</code>. That branching behavior is exactly how real editors handle undo after a new edit.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Wire an Event Bus</h3>
+                    <p>Define a <code>ScoreChanged : IEvent</code> carrying the new score. Have a scoring system <code>Publish</code> it, and two independent subscribers — a UI label and a "high score" tracker — react, neither knowing about the other or the scorer. Then add a third subscriber (a sound cue on milestone scores) <em>without editing</em> the publisher or the existing subscribers. Finally, make each subscriber unsubscribe in <code>OnDisable</code>.</p>
+                    <details>
+                        <summary>✅ The lesson in it</summary>
+                        <p>Adding the third subscriber touches only new code — the publisher and existing listeners are untouched, proving the decoupling. The <code>OnDisable</code> unsubscribe is not optional housekeeping: skip it and the static bus keeps invoking a handler on a destroyed object, leaking memory and eventually throwing. Decoupling buys flexibility but bills you for lifetime discipline.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> Which capability does the Command pattern most directly enable?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Broadcasting to many listeners is the Event Bus.">A) Notifying many systems of one change</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Because a command is an object that knows how to Execute and Undo itself, you get queuing, replay, and undo/redo.">B) Undo/redo, queuing, and replaying actions by treating each action as an object</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Switching behavior by mode is the State pattern.">C) Changing an object's behavior based on its current mode</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> In the code-level State pattern, what does <code>StateMachine.ChangeState</code> do in order?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It calls Exit() on the old state, swaps in the new one, then calls Enter() on it.">A) Calls <code>Exit()</code> on the current state, swaps to the new state, then calls <code>Enter()</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="Enter must run on the new state, not the old, and Exit cleans up the old first.">B) Calls <code>Enter()</code> on the old state, then deletes it</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Ticking every state defeats the purpose; only the active state ticks.">C) Runs <code>Tick()</code> on every registered state each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> What's the main downside of a Service Locator compared with true dependency injection?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Both can hold interfaces; that's not the difference.">A) It can't store services behind interfaces</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Because services are pulled from a global registry, a class's dependencies are hidden from its signature, hurting clarity and testability.">B) Dependencies are hidden — pulled from a global registry instead of visible in the signature</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It's typically less wiring, not more.">C) It requires far more wiring code than DI</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> Why must Event Bus subscribers unsubscribe (e.g. in <code>OnDisable</code>)?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Order of delivery isn't the issue here.">A) Otherwise events arrive in the wrong order</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A static bus holding a delegate to a destroyed object leaks memory and will invoke a handler on a dead object, throwing a null reference.">B) A static bus keeps a delegate to the destroyed object — a memory leak and a null-reference when it's invoked</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Publishing still works; the danger is on the stale subscriber side.">C) The publisher stops working until all subscribers leave</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li><strong>Command</strong> reifies an action as an object with <code>Execute</code>/<code>Undo</code>, enabling undo/redo, input buffering, replays, and networked actions.</li>
+                        <li><strong>State</strong> gives each mode its own <code>IState</code> class with <code>Enter</code>/<code>Tick</code>/<code>Exit</code> — the code cousin of the Animator FSM, for gameplay logic.</li>
+                        <li><strong>Service Locator</strong> is a central registry: less wiring than DI and swappable behind interfaces, but it hides dependencies — prefer DI for your own gameplay code.</li>
+                        <li><strong>Event Bus</strong> fans one published event out to many unaware subscribers, decoupling systems — at the cost of traceability and mandatory unsubscribing.</li>
+                        <li>Choose by the pressure you actually feel; patterns compose, but introduce each only when its pain is already present.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have the full Module 1 toolkit: assemblies, dependency injection, async/await, and a vocabulary of patterns. Time to build something that uses them together. In <strong>Lesson 1.5: A Game Bootstrapper with a Service Container (Mini-Project)</strong>, you'll assemble a real boot sequence — a container registering services behind interfaces, initialized in order with <code>Awaitable</code>, then loading the main scene.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🧩 A vocabulary of shapes</h3>
+                    <p>Command, State, Service Locator, Event Bus — four proven structures for the pressures big projects apply. Next, we put the whole module to work in one build-along.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_03.html" class="prev-lesson">← Previous: Async &amp; Await in Unity 6 — Awaitable</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_05.html" class="next-lesson">Next: A Game Bootstrapper with a Service Container →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

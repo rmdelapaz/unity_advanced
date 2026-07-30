@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Synchronize state across the network with NetworkVariable: read/write permissions, server-writes-clients-read, the OnValueChanged callback, supported types, and NetworkTransform for position — with Netcode for GameObjects.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 6.3: NetworkVariables &amp; State Synchronization — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 6: Multiplayer — Netcode for GameObjects</a></li>
+            <li aria-current="page">Lesson 6.3: NetworkVariables &amp; State Synchronization</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>🔄 Lesson 6.3: NetworkVariables &amp; State Synchronization</h1>
+                <p class="lead">Your objects exist on every machine, but they don't yet <em>agree</em> on anything — one player's health, the shared score, a door's open state. A <strong>NetworkVariable</strong> is the clean answer: a value the server writes and Netcode automatically replicates to every client, firing a callback when it changes. This is how persistent shared state stays in sync.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Declare a <strong><code>NetworkVariable&lt;T&gt;</code></strong> with read/write <strong>permissions</strong></li>
+                        <li>Write it on the server and have it replicate to all clients automatically</li>
+                        <li>React to changes with the <strong><code>OnValueChanged</code></strong> callback</li>
+                        <li>Know which <strong>types</strong> a NetworkVariable supports</li>
+                        <li>Sync transforms with <strong><code>NetworkTransform</code></strong></li>
+                        <li>Choose between a <strong>NetworkVariable</strong> and an <strong>RPC</strong> for a given need</li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 60 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 6.2 (NetworkObjects &amp; ownership)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#problem" class="toc-link">Keeping State in Agreement</a></li>
+                        <li><a href="#declare" class="toc-link">Declaring a NetworkVariable</a></li>
+                        <li><a href="#flow" class="toc-link">Write, Replicate, React</a></li>
+                        <li><a href="#onchanged" class="toc-link">OnValueChanged</a></li>
+                        <li><a href="#types" class="toc-link">Supported Types</a></li>
+                        <li><a href="#transform" class="toc-link">Syncing Transforms</a></li>
+                        <li><a href="#vsrpc" class="toc-link">NetworkVariable vs RPC</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="problem" class="lesson-section">
+                <h2>Keeping State in Agreement</h2>
+                <p>Persistent shared state — anything that "is true for a while" — must read the same on every machine: a player's health, the match score, whose turn it is, whether a gate is open. You could send these manually with messages, but you'd have to handle initial sync (a client joining mid-match needs the current values), change detection, and reliability yourself.</p>
+                <p>A <strong>NetworkVariable</strong> handles all of that. Declare one on a <code>NetworkBehaviour</code>, write it on the server, and Netcode replicates the value to every client — including <em>late joiners</em>, who receive the current value on spawn — and tells each client whenever it changes. It's the workhorse of "server writes, clients read" from Lesson 6.1.</p>
+            </section>
+
+            <section id="declare" class="lesson-section">
+                <h2>Declaring a NetworkVariable</h2>
+                <p>A NetworkVariable is a field on a <code>NetworkBehaviour</code>, constructed with an initial value and two <strong>permissions</strong> — who may read it and who may write it:</p>
+                <pre><code class="language-csharp">using Unity.Netcode;
+using UnityEngine;
+
+public class PlayerHealth : NetworkBehaviour
+{
+    // Everyone can READ; only the SERVER can WRITE (the authoritative default).
+    public NetworkVariable&lt;int&gt; Health = new NetworkVariable&lt;int&gt;(
+        100,
+        NetworkVariableReadPermission.Everyone,
+        NetworkVariableWritePermission.Server);
+}</code></pre>
+                <p><code>NetworkVariableReadPermission.Everyone</code> lets all clients read the value (the usual choice — clients need to display it). <code>NetworkVariableWritePermission.Server</code> means only the server may set it, enforcing authority at the type level. There's also <code>Owner</code> write permission for owner-authoritative designs, but <strong>server write is the safe default</strong> — a client can't forge the value because it isn't allowed to write it.</p>
+            </section>
+
+            <section id="flow" class="lesson-section">
+                <h2>Write, Replicate, React</h2>
+                <p>The server writes <code>.Value</code>; every client's copy updates automatically. Here's the full picture:</p>
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 900 260" role="img" aria-labelledby="nvTitle nvDesc">
+                        <title id="nvTitle">A NetworkVariable replicating from server to clients</title>
+                        <desc id="nvDesc">The server sets Health.Value to 80. Netcode replicates the new value to two clients, whose copies update to 80 and each fire an OnValueChanged callback that updates the health bar UI.</desc>
+                        <rect x="0" y="0" width="900" height="260" rx="8" fill="#22262d"/>
+                        <rect x="330" y="24" width="240" height="70" rx="8" fill="#2c4a30" stroke="#4e8a5b"/>
+                        <text x="450" y="48" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12.5" font-weight="700" fill="#d6f0da">Server writes</text>
+                        <text x="450" y="72" text-anchor="middle" font-family="'Consolas',monospace" font-size="12" fill="#eafaf0">Health.Value = 80;</text>
+                        <defs><marker id="nva" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#9be6b0"/></marker></defs>
+                        <line x1="380" y1="94" x2="210" y2="150" stroke="#9be6b0" stroke-width="2" marker-end="url(#nva)"/>
+                        <line x1="520" y1="94" x2="690" y2="150" stroke="#9be6b0" stroke-width="2" marker-end="url(#nva)"/>
+                        <text x="450" y="118" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#9bd0a5">replicate (automatic, reliable)</text>
+
+                        <rect x="60" y="152" width="300" height="86" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="210" y="176" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dbe9f5">Client 1</text>
+                        <text x="210" y="200" text-anchor="middle" font-family="'Consolas',monospace" font-size="11.5" fill="#cfe0ec">Health.Value → 80</text>
+                        <text x="210" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8fd0ff">OnValueChanged(100, 80) → update bar</text>
+
+                        <rect x="540" y="152" width="300" height="86" rx="8" fill="#2b3038" stroke="#3a4149"/>
+                        <text x="690" y="176" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#dbe9f5">Client 2</text>
+                        <text x="690" y="200" text-anchor="middle" font-family="'Consolas',monospace" font-size="11.5" fill="#cfe0ec">Health.Value → 80</text>
+                        <text x="690" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#8fd0ff">OnValueChanged(100, 80) → update bar</text>
+                    </svg>
+                    <figcaption>Figure 1: The server writes once; Netcode replicates the value to every client and each fires <code>OnValueChanged</code>. No manual messaging, and late-joiners get the current value on spawn.</figcaption>
+                </figure>
+                <pre><code class="language-csharp">// Server-side gameplay. Only the server may write, so guard it.
+public void TakeDamage(int amount)
+{
+    if (!IsServer) return;
+    Health.Value = Mathf.Max(0, Health.Value - amount);   // replicates to all clients
+}</code></pre>
+            </section>
+
+            <section id="onchanged" class="lesson-section">
+                <h2>OnValueChanged</h2>
+                <p>Clients don't poll the value — they subscribe to <strong><code>OnValueChanged</code></strong>, which fires with the previous and new value whenever it changes. Subscribe in <code>OnNetworkSpawn</code> and unsubscribe in <code>OnNetworkDespawn</code> (the Module 2 lesson on garbage-free code warned about leaked event subscriptions — the same discipline applies here):</p>
+                <pre><code class="language-csharp">public override void OnNetworkSpawn()
+{
+    Health.OnValueChanged += HandleHealthChanged;
+    HandleHealthChanged(0, Health.Value);   // initialise UI to the current value
+}
+
+public override void OnNetworkDespawn()
+{
+    Health.OnValueChanged -= HandleHealthChanged;   // always unsubscribe
+}
+
+void HandleHealthChanged(int previous, int current)
+{
+    healthBar.fillAmount = current / 100f;
+    if (current &lt; previous) PlayHitFlash();
+}</code></pre>
+                <p>Because the callback carries both values, you can react to the <em>delta</em> — flash red when health drops, play a heal effect when it rises. This is the clean, event-driven way to keep visuals in step with networked state, on every machine including the host.</p>
+            </section>
+
+            <section id="types" class="lesson-section">
+                <h2>Supported Types</h2>
+                <p>A NetworkVariable can hold value types that Netcode knows how to serialise: the numeric primitives, <code>bool</code>, <code>Vector3</code>/<code>Quaternion</code>/<code>Color</code> and other Unity structs, enums, and <strong><code>FixedString</code></strong> types (since managed <code>string</code> isn't allowed). For your own structs, implement <code>INetworkSerializable</code> so Netcode can pack them:</p>
+                <pre><code class="language-csharp">public struct PlayerStats : INetworkSerializable
+{
+    public int Kills;
+    public FixedString32Bytes Name;   // not a managed string
+
+    public void NetworkSerialize&lt;T&gt;(BufferSerializer&lt;T&gt; s) where T : IReaderWriter
+    {
+        s.SerializeValue(ref Kills);
+        s.SerializeValue(ref Name);
+    }
+}
+// then: public NetworkVariable&lt;PlayerStats&gt; Stats = new();</code></pre>
+                <p>Keep NetworkVariables small and change them only when needed — every change is bandwidth. For a big, rarely-read blob, an RPC on demand (next lesson) is often better than a constantly-synced variable.</p>
+            </section>
+
+            <section id="transform" class="lesson-section">
+                <h2>Syncing Transforms</h2>
+                <p>You <em>could</em> put a position in a NetworkVariable and update it every frame, but movement is common enough that Netcode ships a component for it: <strong><code>NetworkTransform</code></strong>. Add it to a networked object and its position, rotation, and scale replicate automatically, with interpolation to smooth out network jitter.</p>
+                <p>By default <code>NetworkTransform</code> is <strong>server-authoritative</strong> — the server's transform is the truth and clients follow it (so a client moves its avatar by <em>requesting</em> movement via an RPC, and the server applies it). There's also a <code>ClientNetworkTransform</code> variant for owner-authoritative movement, used when low latency matters more than strict anti-cheat. For this course's authoritative model, server-authoritative <code>NetworkTransform</code> plus movement RPCs is the clean default — which sets up the next lesson perfectly.</p>
+                <div class="card card-success">
+                    <h4>✅ Rule of thumb</h4>
+                    <p>Use <strong><code>NetworkTransform</code></strong> for position/rotation, a <strong><code>NetworkVariable</code></strong> for other persistent state (health, score, flags), and an <strong>RPC</strong> for one-off events and client requests. Reaching for the right one of the three is most of netcode design.</p>
+                </div>
+            </section>
+
+            <section id="vsrpc" class="lesson-section">
+                <h2>NetworkVariable vs RPC</h2>
+                <p>The two ways to move data are complementary, and choosing correctly keeps your netcode clean:</p>
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th></th><th>NetworkVariable</th><th>RPC (Lesson 6.4)</th></tr></thead>
+                        <tbody>
+                            <tr><td><strong>For</strong></td><td>persistent <em>state</em> ("what is true now")</td><td>momentary <em>events</em> ("this just happened")</td></tr>
+                            <tr><td><strong>Late joiners</strong></td><td>get the current value automatically</td><td>miss RPCs sent before they joined</td></tr>
+                            <tr><td><strong>Example</strong></td><td>health, score, is-door-open</td><td>"play explosion", "I pressed jump"</td></tr>
+                            <tr><td><strong>Direction</strong></td><td>server → clients (server writes)</td><td>either way, incl. client → server requests</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p>The tell: if a client joining mid-game needs to know it, it's <strong>state</strong> → NetworkVariable. If it's a fleeting notification that only matters at the moment, it's an <strong>event</strong> → RPC.</p>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: A synced health bar</h3>
+                    <p><strong>Objective:</strong> Replicate a value and react to it.</p>
+                    <ol>
+                        <li>Add the <code>PlayerHealth</code> NetworkBehaviour (server-write <code>Health</code> NetworkVariable) to your player prefab, with a world-space health bar.</li>
+                        <li>Subscribe to <code>OnValueChanged</code> in <code>OnNetworkSpawn</code>; update the bar; unsubscribe in <code>OnNetworkDespawn</code>.</li>
+                        <li>On the server, call <code>TakeDamage(10)</code> on a key press (guard with <code>IsServer</code>).</li>
+                        <li>Run host + client. Damage a player on the host and confirm <em>both</em> windows' bars drop in sync.</li>
+                    </ol>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>If only the host's bar updates, check the write permission is <code>Server</code> and that you're setting <code>Health.Value</code> on the server, not the client. If the client bar starts wrong, remember to initialise it to <code>Health.Value</code> in <code>OnNetworkSpawn</code> — late joiners need the current value applied once.</p>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: State or event?</h3>
+                    <p>For each, choose NetworkVariable or RPC: (a) the current match score; (b) a one-shot "goal scored!" celebration effect; (c) whether a drawbridge is currently raised; (d) a client telling the server "I want to fire."</p>
+                    <details>
+                        <summary>✅ Answers</summary>
+                        <p>(a) <strong>NetworkVariable</strong> — persistent state a late joiner needs. (b) <strong>RPC</strong> — a momentary event. (c) <strong>NetworkVariable</strong> — persistent state. (d) <strong>RPC</strong> — a client → server request/event. (a) and (c) must survive a mid-game join; (b) and (d) are fleeting.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> With <code>NetworkVariableWritePermission.Server</code>, who can set the value — and why is that the safe default?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Only the server can write it, so a client can't forge the value — authority enforced at the type level.">A) Only the server, so clients can't forge it</button>
+                            <button class="quiz-option" data-correct="false" data-hint="That would defeat the anti-cheat purpose.">B) Any client, for convenience</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Reading is separate; the question is about writes.">C) Only clients that can read it</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> How do clients learn a NetworkVariable changed?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Polling every frame is wasteful and unnecessary.">A) They poll <code>.Value</code> every frame</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! Subscribe to OnValueChanged, which fires with the previous and new value.">B) They subscribe to <code>OnValueChanged</code>, which fires with old and new values</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Clients don't request it; the server replicates automatically.">C) They send the server a request each frame</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> A player joins mid-match. What do they see for a server-written NetworkVariable score?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! NetworkVariables sync their current value to late joiners on spawn.">A) The current value — NetworkVariables sync to late joiners on spawn</button>
+                            <button class="quiz-option" data-correct="false" data-hint="They don't start from the constructor default; they get the live value.">B) The initial constructor value, 0</button>
+                            <button class="quiz-option" data-correct="false" data-hint="State (unlike an RPC event) is retained and synced on join.">C) Nothing until the next change</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>A <strong><code>NetworkVariable&lt;T&gt;</code></strong> replicates persistent shared state from server to clients automatically, including to late joiners.</li>
+                        <li>Construct it with read/write <strong>permissions</strong>; <code>ReadPermission.Everyone</code> + <code>WritePermission.Server</code> is the authoritative default.</li>
+                        <li>The server sets <code>.Value</code>; clients react via <strong><code>OnValueChanged</code></strong> (subscribe in <code>OnNetworkSpawn</code>, unsubscribe in <code>OnNetworkDespawn</code>).</li>
+                        <li>Supported types are serialisable value types, <code>FixedString</code>, and your own <code>INetworkSerializable</code> structs — keep them small.</li>
+                        <li><strong><code>NetworkTransform</code></strong> syncs position/rotation/scale (server-authoritative by default, with interpolation).</li>
+                        <li><strong>State → NetworkVariable, event → RPC:</strong> if a late joiner needs it, it's state.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>State flows server → clients. But how does a client <em>ask</em> the server to do something — fire, jump, pick up? And how does the server broadcast a one-off event? In <strong>Lesson 6.4: RPCs — Remote Procedure Calls</strong> we complete the picture with the universal <code>[Rpc]</code> attribute.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>🔄 Everyone agrees now</h3>
+                    <p>Server writes, clients read, callbacks fire. Persistent state stays in sync across every machine with a single field — the backbone of a networked game's shared world.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_27.html" class="prev-lesson">← Previous: NetworkObjects, Spawning &amp; Ownership</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_29.html" class="next-lesson">Next: RPCs — Remote Procedure Calls →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>

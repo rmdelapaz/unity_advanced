@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Manage content at scale with Unity's Addressables. Why it beats Resources and hard scene references for memory control and remote content; addresses, labels, and AssetReference; LoadAssetAsync and InstantiateAsync returning AsyncOperationHandle; always releasing with Addressables.Release/ReleaseInstance; content catalogs, remote hosting, and DownloadDependenciesAsync.">
+    <meta name="author" content="Ray de la Paz">
+    <title>Lesson 7.3: Addressables — Async Content Management — Unity Advanced</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        window.__mermaid = mermaid;
+        const isDark = localStorage.getItem('theme') === 'dark' ||
+            (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        mermaid.initialize({
+            startOnLoad: true, theme: isDark ? 'dark' : 'default',
+            themeVariables: isDark
+                ? { primaryColor: '#334155', primaryTextColor: '#e2e8f0', primaryBorderColor: '#6366f1', lineColor: '#94a3b8', secondaryColor: '#1e293b', tertiaryColor: '#0f172a' }
+                : { primaryColor: '#eff6ff', primaryTextColor: '#1e293b', primaryBorderColor: '#3b82f6', lineColor: '#64748b', secondaryColor: '#f8fafc', tertiaryColor: '#f1f5f9' }
+        });
+    </script>
+    <style>
+        .ui-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .ui-figure svg { width: 100%; height: auto; display: block; margin: 0 auto; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,0.28); }
+        .ui-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .render-figure { margin: var(--spacing-lg) 0; text-align: center; }
+        .render-figure img { width: 100%; height: auto; border-radius: 8px; box-shadow: 0 6px 22px rgba(0,0,0,0.32); }
+        .render-figure figcaption { margin-top: var(--spacing-sm); font-size: 0.9rem; color: var(--text-light); }
+        .pillar-row { display: flex; flex-wrap: wrap; gap: var(--spacing-md); margin: var(--spacing-lg) 0; }
+        .pillar-row .pillar { flex: 1 1 220px; }
+        .pillar-row .pillar h4 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <a href="#main-content" class="skip-to-main">Skip to main content</a>
+
+    <nav class="main-nav">
+        <div class="nav-container">
+            <a href="index.html" class="nav-logo">🎮 Unity Advanced</a>
+            <button id="mobile-menu-toggle" class="mobile-menu-toggle" aria-expanded="false" aria-controls="nav-links">☰</button>
+            <div class="nav-links" id="nav-links">
+                <a href="index.html">Home</a>
+                <a href="index.html#modules">All Modules</a>
+                <span class="nav-divider"></span>
+                <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+                <a href="https://rays-home.netlify.app/contact">Contact</a>
+                <button id="theme-toggle" aria-label="Toggle dark/light mode">🌙</button>
+            </div>
+        </div>
+    </nav>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ul>
+            <li><a href="index.html">Home</a></li>
+            <li><a href="index.html#modules">Module 7: Editor Tooling &amp; Addressables</a></li>
+            <li aria-current="page">Lesson 7.3: Addressables — Async Content Management</li>
+        </ul>
+    </nav>
+
+    <main id="main-content">
+        <div class="container">
+            <header>
+                <h1>📦 Lesson 7.3: Addressables — Async Content Management</h1>
+                <p class="lead">As a game grows, two problems arrive together: it uses too much memory because everything referenced by a scene loads with it, and it ships as one giant build you must fully re-download to change a single texture. <strong>Addressables</strong> is Unity's answer to both. It lets you refer to any asset by a string <em>address</em>, load and unload it <strong>asynchronously</strong> and <em>on demand</em>, and even host content <em>remotely</em> so you can update it without shipping a new build. This lesson covers the model, the core API, and the one rule you must never break: everything you load, you must release.</p>
+
+                <div class="card card-info">
+                    <h2>🎯 Learning Objectives</h2>
+                    <p>By the end of this lesson, you will be able to:</p>
+                    <ul>
+                        <li>Explain <em>why</em> Addressables beats direct scene references and the old <code>Resources</code> folder for memory and content control</li>
+                        <li>Describe addresses, labels, groups, and the <code>AssetReference</code> serialized field</li>
+                        <li>Load an asset with <code>Addressables.LoadAssetAsync&lt;T&gt;(key)</code> and <code>await</code> its <code>AsyncOperationHandle&lt;T&gt;</code></li>
+                        <li>Instantiate with <code>Addressables.InstantiateAsync</code></li>
+                        <li>Always release with <code>Addressables.Release</code> / <code>ReleaseInstance</code> — and explain reference counting</li>
+                        <li>Outline content catalogs, remote hosting, and <code>DownloadDependenciesAsync</code></li>
+                    </ul>
+                    <p><strong>Estimated Time:</strong> 70 minutes &nbsp;·&nbsp; <strong>Prerequisite:</strong> Lesson 1.3 (async/await &amp; awaitable patterns in Unity)</p>
+                </div>
+            </header>
+
+            <details class="card toc-card" open>
+                <summary aria-label="Toggle table of contents">
+                    <span class="toc-icon" aria-hidden="true">📑</span>
+                    <span class="toc-label">In This Lesson</span>
+                    <span class="toc-chevron" aria-hidden="true">▾</span>
+                </summary>
+                <nav aria-label="Table of Contents">
+                    <ol>
+                        <li><a href="#why" class="toc-link">Why Addressables</a></li>
+                        <li><a href="#model" class="toc-link">Addresses, Labels &amp; Groups</a></li>
+                        <li><a href="#load" class="toc-link">Loading Asynchronously</a></li>
+                        <li><a href="#release" class="toc-link">The Golden Rule: Release</a></li>
+                        <li><a href="#reference" class="toc-link">AssetReference Fields</a></li>
+                        <li><a href="#remote" class="toc-link">Catalogs &amp; Remote Content</a></li>
+                        <li><a href="#exercise" class="toc-link">Hands-on Challenge</a></li>
+                        <li><a href="#summary" class="toc-link">Summary</a></li>
+                    </ol>
+                </nav>
+            </details>
+
+            <section id="why" class="lesson-section">
+                <h2>Why Addressables</h2>
+                <p>To see the problem Addressables solves, look at the two ways you already load content and where each fails at scale.</p>
+
+                <div class="pillar-row">
+                    <div class="card card-warning pillar">
+                        <h4>🔗 Direct references</h4>
+                        <p>Drag a prefab into a public field and it's a hard reference. Simple — but every asset a scene <em>directly or indirectly</em> references loads into memory when the scene loads, whether the player reaches it or not. A big level with hundreds of linked assets means a huge, unavoidable memory spike.</p>
+                    </div>
+                    <div class="card card-warning pillar">
+                        <h4>📁 Resources folder</h4>
+                        <p><code>Resources.Load("path")</code> loads by string, on demand — better. But <em>everything</em> in any <code>Resources</code> folder is packed into one bundle baked into the build, bloating build size and startup, and it can't be updated without a new build. Unity officially discourages it.</p>
+                    </div>
+                    <div class="card card-success pillar">
+                        <h4>📦 Addressables</h4>
+                        <p>Refer to assets by address, load and release them individually and asynchronously, bundle them however you like, and host them locally <em>or</em> remotely. Memory, build size, and content updates all come under your control.</p>
+                    </div>
+                </div>
+
+                <p>Three concrete wins fall out of that. First, <strong>memory control</strong>: nothing loads until you ask, and it unloads the moment you release, so you hold only what's on screen. Second, <strong>remote content</strong>: assets can live on a CDN and download at runtime, so you can add or fix content without resubmitting the app. Third, <strong>decoupling</strong>: code refers to content by key, not by a hard link, so scenes stay lean and assets can move between bundles without touching a line of code.</p>
+
+                <blockquote>
+                    <strong>🔎 It builds on Lesson 1.3.</strong> Every Addressables load is <em>asynchronous</em> — it returns immediately and completes later, because the asset may be on disk or across a network. You'll <code>await</code> these operations using exactly the async/await patterns from Lesson 1.3. If awaiting still feels shaky, revisit it before the code below.
+                </blockquote>
+            </section>
+
+            <section id="model" class="lesson-section">
+                <h2>Addresses, Labels &amp; Groups</h2>
+                <p>You mark an asset "Addressable" with a checkbox in its Inspector (or by dragging it into the <strong>Addressables Groups</strong> window). Doing so gives it three things:</p>
+
+                <div class="card card-accent">
+                    <h4>📖 The vocabulary</h4>
+                    <ul>
+                        <li><strong>Address</strong> — a unique string key you load by, e.g. <code>"Enemies/Goblin"</code>. Defaults to the asset path but you can rename it to anything stable.</li>
+                        <li><strong>Label</strong> — a tag you can attach to many assets (e.g. <code>"forest"</code>, <code>"boss"</code>). Load or preload <em>everything</em> with a label in one call.</li>
+                        <li><strong>Group</strong> — how assets are packed into <strong>bundles</strong> and whether those bundles are <em>local</em> (in the build) or <em>remote</em> (on a server). Groups are a build-time packing decision, invisible to your loading code.</li>
+                    </ul>
+                </div>
+
+                <p>The <strong>Addressables Groups</strong> window is where you organize all this — assets grouped into rows, each with its address and labels, and each group configured local or remote. It's a UI Toolkit window, so like the tools in the last two lessons it's reconstructed here as a diagram rather than a screenshot:</p>
+
+                <figure class="ui-figure">
+                    <svg viewBox="0 0 760 360" role="img" aria-labelledby="grpTitle grpDesc">
+                        <title id="grpTitle">The Addressables Groups window, reconstructed</title>
+                        <desc id="grpDesc">A mock of Unity's Addressables Groups window. It is a table with columns for Group/Asset Address, Labels, and Bundle location. Two groups are shown. The first, "Local_Enemies (Local)", contains rows for addresses Enemies/Goblin and Enemies/Orc, each labelled "enemy". The second, "Remote_Levels (Remote)", contains rows for Levels/Forest and Levels/Cavern, each labelled "level" and "dlc", with the location marked as a remote server URL.</desc>
+                        <rect x="0" y="0" width="760" height="360" rx="8" fill="#33373d"/>
+
+                        <!-- title bar -->
+                        <rect x="16" y="16" width="728" height="30" rx="6" fill="#2a2d33"/>
+                        <text x="30" y="36" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#e6e6e6">📦 Addressables Groups</text>
+
+                        <!-- column headers -->
+                        <text x="34" y="70" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#9aa4b0">Group / Address</text>
+                        <text x="430" y="70" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#9aa4b0">Labels</text>
+                        <text x="600" y="70" font-family="'Segoe UI',sans-serif" font-size="11" font-weight="700" fill="#9aa4b0">Bundle</text>
+                        <line x1="24" y1="78" x2="736" y2="78" stroke="#4a4f57"/>
+
+                        <!-- group 1 header -->
+                        <rect x="24" y="86" width="712" height="26" rx="3" fill="#2b3038"/>
+                        <text x="36" y="103" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#8fd0ff">▾ Local_Enemies</text>
+                        <rect x="600" y="90" width="60" height="18" rx="9" fill="#26382a"/>
+                        <text x="630" y="103" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9be6b0">Local</text>
+
+                        <!-- rows group 1 -->
+                        <text x="54" y="132" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">Enemies/Goblin</text>
+                        <rect x="430" y="120" width="56" height="16" rx="8" fill="#3a4b63"/>
+                        <text x="458" y="132" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#cfe0ff">enemy</text>
+                        <text x="600" y="132" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9be6b0">in build</text>
+
+                        <text x="54" y="158" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">Enemies/Orc</text>
+                        <rect x="430" y="146" width="56" height="16" rx="8" fill="#3a4b63"/>
+                        <text x="458" y="158" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#cfe0ff">enemy</text>
+                        <text x="600" y="158" font-family="'Segoe UI',sans-serif" font-size="10" fill="#9be6b0">in build</text>
+
+                        <!-- group 2 header -->
+                        <rect x="24" y="176" width="712" height="26" rx="3" fill="#2b3038"/>
+                        <text x="36" y="193" font-family="'Segoe UI',sans-serif" font-size="12" font-weight="700" fill="#ffd79a">▾ Remote_Levels</text>
+                        <rect x="600" y="180" width="66" height="18" rx="9" fill="#4a3d27"/>
+                        <text x="633" y="193" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ffd79a">Remote</text>
+
+                        <!-- rows group 2 -->
+                        <text x="54" y="222" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">Levels/Forest</text>
+                        <rect x="430" y="210" width="52" height="16" rx="8" fill="#3a4b63"/>
+                        <text x="456" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#cfe0ff">level</text>
+                        <rect x="488" y="210" width="42" height="16" rx="8" fill="#5a3a63"/>
+                        <text x="509" y="222" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6c0ff">dlc</text>
+                        <text x="600" y="222" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ffd79a">CDN url</text>
+
+                        <text x="54" y="248" font-family="'Consolas',monospace" font-size="11" fill="#e6e6e6">Levels/Cavern</text>
+                        <rect x="430" y="236" width="52" height="16" rx="8" fill="#3a4b63"/>
+                        <text x="456" y="248" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#cfe0ff">level</text>
+                        <rect x="488" y="236" width="42" height="16" rx="8" fill="#5a3a63"/>
+                        <text x="509" y="248" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="9.5" fill="#e6c0ff">dlc</text>
+                        <text x="600" y="248" font-family="'Segoe UI',sans-serif" font-size="10" fill="#ffd79a">CDN url</text>
+
+                        <!-- footnote -->
+                        <line x1="24" y1="272" x2="736" y2="272" stroke="#4a4f57"/>
+                        <text x="380" y="300" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="11" fill="#aeb8c4">Code loads by <tspan font-family="'Consolas',monospace" fill="#8fd0ff">address</tspan> or <tspan font-family="'Consolas',monospace" fill="#cfe0ff">label</tspan> — it never knows or cares which bundle, local or remote, holds the asset.</text>
+                        <text x="380" y="326" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="10.5" fill="#7f8791">Moving an asset between groups changes packing only; not a single line of loading code.</text>
+                    </svg>
+                    <figcaption>Figure 1: The Addressables Groups window (reconstructed). Assets are organized into groups that decide bundling and local-vs-remote hosting; each asset carries an address and labels. Your loading code targets addresses and labels, staying blind to which bundle — or which continent — actually holds the bytes.</figcaption>
+                </figure>
+            </section>
+
+            <section id="load" class="lesson-section">
+                <h2>Loading Asynchronously</h2>
+                <p>Loading returns an <code>AsyncOperationHandle&lt;T&gt;</code> — a handle to an in-progress operation that you await and later release. There are two things you'll load: an asset (data you keep, like a prefab or sprite) and an instance (a live GameObject in the scene). Start with loading an asset:</p>
+                <pre><code class="language-csharp">using System.Threading.Tasks;
+using UnityEngine;
+using UnityEngine.AddressableAssets;         // Addressables
+using UnityEngine.ResourceManagement.AsyncOperations; // AsyncOperationHandle
+
+public class GoblinFactory : MonoBehaviour
+{
+    AsyncOperationHandle&lt;GameObject&gt; handle;   // keep it so we can release later
+
+    async Task LoadPrefabAsync()
+    {
+        // Kick off the load. Returns immediately; the work happens over time.
+        handle = Addressables.LoadAssetAsync&lt;GameObject&gt;("Enemies/Goblin");
+
+        // Await completion — non-blocking, like any Task (Lesson 1.3).
+        GameObject prefab = await handle.Task;
+
+        if (handle.Status == AsyncOperationStatus.Succeeded)
+            Instantiate(prefab, transform.position, Quaternion.identity);
+        else
+            Debug.LogError("Failed to load Enemies/Goblin");
+    }
+}</code></pre>
+
+                <p>The key you pass — <code>"Enemies/Goblin"</code> — is the <em>address</em>. You could equally pass a <code>label</code> to load a whole set, or an <code>AssetReference</code> (next section). If the asset is remote and not yet cached, this same call downloads it first; your code doesn't change. You can also subscribe instead of awaiting: <code>handle.Completed += op =&gt; { ... };</code> — useful in non-async contexts.</p>
+
+                <p>To put a live object in the scene, use <code>InstantiateAsync</code>, which loads (if needed) and instantiates in one step:</p>
+                <pre><code class="language-csharp">// Load-and-spawn in one call. The handle here represents the *instance*.
+AsyncOperationHandle&lt;GameObject&gt; spawnHandle =
+    Addressables.InstantiateAsync("Enemies/Goblin", position, Quaternion.identity);
+GameObject goblin = await spawnHandle.Task;</code></pre>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — <code>AsyncOperationHandle&lt;T&gt;</code></h4>
+                    <p>A ref-counted handle to a loading operation. It exposes <code>.Task</code> (awaitable), <code>.Status</code> (<code>Succeeded</code>/<code>Failed</code>), <code>.PercentComplete</code> (for progress bars), and <code>.Result</code> (the loaded <code>T</code> once done). Crucially, it is also the <em>token you release</em> to free the asset. Hold onto it — losing the handle means you can't release, and that's a leak.</p>
+                </div>
+            </section>
+
+            <section id="release" class="lesson-section">
+                <h2>The Golden Rule: Release</h2>
+                <p>Addressables tracks memory with <strong>reference counting</strong>. Each load increments a count on the underlying asset and its dependencies; each release decrements it. When the count hits zero, Unity unloads the asset and its bundle. Load without releasing and the count never drops — the asset stays in memory forever. This is the single most important discipline of the whole system.</p>
+
+                <pre><code class="language-csharp">void OnDestroy()
+{
+    // Release the ASSET load: use Addressables.Release with the handle.
+    if (handle.IsValid())
+        Addressables.Release(handle);
+}
+
+// For something spawned with InstantiateAsync, release the INSTANCE:
+void Despawn(GameObject goblin)
+{
+    // ReleaseInstance destroys the GameObject *and* decrements the ref count.
+    Addressables.ReleaseInstance(goblin);
+}</code></pre>
+
+                <div class="card card-warning">
+                    <h4>⚠️ Release the right way for the right load</h4>
+                    <ul>
+                        <li>Loaded with <code>LoadAssetAsync</code> → release with <code>Addressables.Release(handle)</code>.</li>
+                        <li>Spawned with <code>InstantiateAsync</code> → release with <code>Addressables.ReleaseInstance(go)</code> (this also destroys the object). Calling plain <code>Destroy()</code> on it leaks the ref count.</li>
+                        <li>Every <em>load</em> needs exactly one matching <em>release</em>. Loading the same key twice increments the count twice — release twice.</li>
+                    </ul>
+                </div>
+
+                <p>The lifecycle below is the mental model to carry: an operation moves from load, to an awaited handle, to use, to release, and only then does memory actually free. Skip the last box and you have a leak that grows the longer the session runs.</p>
+
+                <div class="mermaid">
+flowchart LR
+    A["LoadAssetAsync(key)<br/>ref count +1"] --> B["await handle.Task"]
+    B --> C["use handle.Result<br/>(prefab / sprite / data)"]
+    C --> D["Addressables.Release(handle)<br/>ref count −1"]
+    D --> E{"count == 0?"}
+    E -->|yes| F["asset + bundle unloaded<br/>memory freed"]
+    E -->|no| G["still held by<br/>another loader"]
+                </div>
+                <p class="figure-caption" style="text-align:center;color:var(--text-light);font-size:0.9rem;">Figure 2: The load/release lifecycle. Every load bumps a reference count; every release drops it; the asset frees only when the count reaches zero. Forgetting the release step is the classic Addressables memory leak.</p>
+
+                <div class="card card-success">
+                    <h4>✅ A pattern that's hard to leak</h4>
+                    <p>Wrap each load in a small owner object — a component, a pool, a "handle bag" — whose job is to release in <code>OnDestroy</code> or on unload. If <em>who owns this handle</em> always has a clear answer, releases rarely get lost. The mini-project's <code>LevelLoader</code> does exactly this: it keeps a list of the instances it spawned and releases every one on unload.</p>
+                </div>
+            </section>
+
+            <section id="reference" class="lesson-section">
+                <h2>AssetReference Fields</h2>
+                <p>Loading by a hand-typed string works, but a typo is a runtime failure and there's no drag-and-drop. <code>AssetReference</code> fixes both: it's a serializable field that shows a familiar object-picker in the Inspector, yet stores an Addressables key rather than a hard reference — so assigning it does <em>not</em> pull the asset into memory. It's the designer-friendly way to point at Addressable content.</p>
+                <pre><code class="language-csharp">using UnityEngine;
+using UnityEngine.AddressableAssets;
+using UnityEngine.ResourceManagement.AsyncOperations;
+
+public class Spawner : MonoBehaviour
+{
+    // Drag an Addressable prefab here in the Inspector — stored as a key, not a hard link.
+    public AssetReferenceGameObject enemyRef;
+
+    AsyncOperationHandle&lt;GameObject&gt; handle;
+
+    async void Start()
+    {
+        // AssetReference has its own load/instantiate helpers.
+        handle = enemyRef.InstantiateAsync(transform.position, Quaternion.identity);
+        await handle.Task;
+    }
+
+    void OnDestroy()
+    {
+        if (handle.IsValid())
+            enemyRef.ReleaseInstance(handle);   // release via the reference
+    }
+}</code></pre>
+
+                <p><code>AssetReference</code> comes in typed flavours — <code>AssetReferenceGameObject</code>, <code>AssetReferenceTexture</code>, <code>AssetReferenceSprite</code> — that restrict the picker to the right asset type, catching mistakes at edit time. The same release rule applies: whatever you loaded or instantiated through the reference, you release. This is the field type the mini-project's level-layout asset uses to remember <em>which</em> Addressable each placement marker points to.</p>
+            </section>
+
+            <section id="remote" class="lesson-section">
+                <h2>Catalogs &amp; Remote Content</h2>
+                <p>How does the runtime know that <code>"Enemies/Goblin"</code> maps to a particular file in a particular bundle, possibly on a server? Through a <strong>content catalog</strong> — a small JSON manifest, built alongside your bundles, that maps every address and label to its bundle and dependencies. At startup Addressables loads the catalog; from then on, any key you request is resolved through it.</p>
+
+                <div class="card card-accent">
+                    <h4>📖 Definition — content catalog</h4>
+                    <p>The lookup table Addressables ships with your content: address/label → bundle → dependencies. It can be <strong>local</strong> (in the build) or <strong>remote</strong>. A remote catalog is the mechanism behind live content updates — point the app at a new catalog on your server and it discovers new or changed content <em>without a new app build</em>.</p>
+                </div>
+
+                <p>When content is remote, you often want to <strong>preload</strong> it — download a level's bundles up front (behind a progress bar) so gameplay never stalls mid-scene waiting on a network fetch. That's <code>DownloadDependenciesAsync</code>, which downloads (and caches) everything a key or label needs without instantiating anything:</p>
+                <pre><code class="language-csharp">async Task PreloadLevelAsync()
+{
+    // Download every bundle tagged "level" into the cache, with progress.
+    var handle = Addressables.DownloadDependenciesAsync("level");
+
+    while (!handle.IsDone)
+    {
+        float pct = handle.PercentComplete;   // drive a loading bar
+        // ... update UI ...
+        await Task.Yield();
+    }
+
+    // Optional: check the total size beforehand with GetDownloadSizeAsync(key).
+    Addressables.Release(handle);             // release the download op when done
+}</code></pre>
+
+                <p>Once dependencies are downloaded and cached, subsequent <code>LoadAssetAsync</code>/<code>InstantiateAsync</code> calls for those keys resolve from the local cache and complete quickly. Downloaded bundles persist between sessions, so you pay the network cost once. Together, remote catalogs plus <code>DownloadDependenciesAsync</code> are how live-service games patch content, run seasonal events, and ship optional DLC — all without a store resubmission.</p>
+
+                <blockquote>
+                    <strong>💡 You don't need a server to learn this.</strong> During development, groups set to "remote" can be served from a local folder or Unity's built-in hosting service, and the catalog/download code is identical to production. Build the habits — addresses, handles, releases, preloading — locally, and they carry straight over to a real CDN.
+                </blockquote>
+            </section>
+
+            <section id="exercise" class="lesson-section">
+                <h2>Hands-on Challenge</h2>
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 1: Load, spawn, and release cleanly</h3>
+                    <p><strong>Objective:</strong> Write a component that owns an Addressable instance for its whole lifetime and never leaks.</p>
+                    <p>Create a <code>PickupSpawner : MonoBehaviour</code> with an <code>AssetReferenceGameObject pickupRef</code>. On <code>Start</code>, instantiate the pickup asynchronously and store the handle. On <code>OnDestroy</code>, release the instance. Add a bool that logs the load's <code>PercentComplete</code> each frame while it's still loading.</p>
+                    <details>
+                        <summary>💡 Hint</summary>
+                        <p>Keep the <code>AsyncOperationHandle&lt;GameObject&gt;</code> as a field. Await <code>handle.Task</code> in an <code>async void Start</code>. In <code>OnDestroy</code>, guard with <code>if (handle.IsValid())</code> before <code>pickupRef.ReleaseInstance(handle)</code> — releasing an invalid handle throws.</p>
+                    </details>
+                    <details>
+                        <summary>✅ Solution sketch</summary>
+                        <pre><code class="language-csharp">public class PickupSpawner : MonoBehaviour
+{
+    public AssetReferenceGameObject pickupRef;
+    AsyncOperationHandle&lt;GameObject&gt; handle;
+
+    async void Start()
+    {
+        handle = pickupRef.InstantiateAsync(transform.position, Quaternion.identity);
+        while (!handle.IsDone)
+        {
+            Debug.Log($"Loading pickup: {handle.PercentComplete:P0}");
+            await Task.Yield();
+        }
+        if (handle.Status != AsyncOperationStatus.Succeeded)
+            Debug.LogError("Pickup failed to load");
+    }
+
+    void OnDestroy()
+    {
+        if (handle.IsValid())
+            pickupRef.ReleaseInstance(handle);   // destroys instance + drops ref count
+    }
+}</code></pre>
+                    </details>
+                </div>
+
+                <div class="card card-info">
+                    <h3>🏋️ Exercise 2: Diagnose the leak</h3>
+                    <p>A teammate reports that memory climbs steadily as enemies spawn and die during a wave. Their spawn/despawn code is: <code>var h = Addressables.InstantiateAsync("Enemies/Goblin"); ... // on death: Destroy(goblinGameObject);</code>. What's wrong, and what's the fix?</p>
+                    <details>
+                        <summary>✅ Answer</summary>
+                        <p>They spawned with <code>InstantiateAsync</code> (ref count +1) but killed the object with plain <code>Destroy()</code>, which removes the GameObject <em>without</em> decrementing the Addressables reference count. The bundle's count never returns to zero, so the asset — and every dependency — stays resident; each wave leaks more. The fix is to despawn with <code>Addressables.ReleaseInstance(goblinGameObject)</code>, which destroys the object <em>and</em> drops the count. Rule of thumb: what Addressables instantiated, Addressables must release.</p>
+                    </details>
+                </div>
+
+                <div class="card quiz-container">
+                    <h3>🎯 Quick Quiz</h3>
+                    <div class="quiz-question">
+                        <p><strong>Question 1:</strong> What's the main advantage of Addressables over dragging a prefab into a public reference field?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Both end up instantiating the same prefab; rendering isn't the point.">A) Addressable prefabs render faster</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A hard reference forces the asset to load with the scene. Addressables load on demand and unload on release, and can even live remotely — you control memory and content.">B) Assets load on demand and unload on release (and can be remote), instead of loading whenever the scene does</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Addressables don't remove the need for prefabs; they change how prefabs are referenced and loaded.">C) You no longer need prefabs at all</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 2:</strong> You spawned an enemy with <code>Addressables.InstantiateAsync</code>. How should you remove it?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Plain Destroy removes the GameObject but never decrements the ref count — a leak.">A) <code>Destroy(enemy)</code></button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! ReleaseInstance destroys the GameObject AND decrements the Addressables reference count, so the bundle can eventually unload.">B) <code>Addressables.ReleaseInstance(enemy)</code></button>
+                            <button class="quiz-option" data-correct="false" data-hint="There's no need to unload the whole catalog to remove one instance.">C) <code>Addressables.ClearResourceLocators()</code></button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 3:</strong> What does <code>Addressables.LoadAssetAsync&lt;GameObject&gt;("key")</code> return?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="It can't return the object synchronously — the asset may still be loading or downloading.">A) The loaded <code>GameObject</code>, immediately</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! It returns an AsyncOperationHandle<GameObject> you await (handle.Task) and later release — the operation completes over time.">B) An <code>AsyncOperationHandle&lt;GameObject&gt;</code> you await and later release</button>
+                            <button class="quiz-option" data-correct="false" data-hint="It doesn't block the main thread; that would defeat async loading.">C) Nothing — it blocks until the asset is ready</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                    <div class="quiz-question">
+                        <p><strong>Question 4:</strong> What is a remote content catalog for?</p>
+                        <div class="quiz-options">
+                            <button class="quiz-option" data-correct="false" data-hint="Catalogs describe where content is; they don't compress it.">A) It compresses textures at runtime</button>
+                            <button class="quiz-option" data-correct="true" data-explanation="Correct! A remote catalog maps addresses/labels to bundles on a server, letting you add or update content without shipping a new app build.">B) It maps addresses to bundles on a server, so you can update content without a new build</button>
+                            <button class="quiz-option" data-correct="false" data-hint="Reference counting handles releasing; that's not the catalog's job.">C) It automatically releases handles for you</button>
+                        </div>
+                        <div class="quiz-feedback"></div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="summary" class="lesson-section">
+                <h2>Summary</h2>
+                <div class="card card-success">
+                    <h3>🎉 Key Takeaways</h3>
+                    <ul>
+                        <li>Addressables gives you <strong>memory control</strong> (load on demand, unload on release), <strong>remote content</strong>, and <strong>decoupling</strong> from scenes and the <code>Resources</code> folder.</li>
+                        <li>Assets carry an <strong>address</strong> (unique key) and <strong>labels</strong> (shared tags); <strong>groups</strong> decide bundling and local-vs-remote hosting — invisible to loading code.</li>
+                        <li><code>LoadAssetAsync&lt;T&gt;(key)</code> and <code>InstantiateAsync(key)</code> return an <code>AsyncOperationHandle&lt;T&gt;</code>; <code>await handle.Task</code> for the result.</li>
+                        <li><strong>Always release:</strong> <code>Addressables.Release(handle)</code> for asset loads, <code>Addressables.ReleaseInstance(go)</code> for instantiations. Reference counting frees memory only at zero.</li>
+                        <li><code>AssetReference</code> (typed: <code>AssetReferenceGameObject</code>, …) is the Inspector-friendly, typo-proof way to point at Addressable content without hard-loading it.</li>
+                        <li><strong>Content catalogs</strong> map keys to bundles; remote catalogs enable live updates, and <code>DownloadDependenciesAsync</code> preloads/caches bundles behind a progress bar.</li>
+                    </ul>
+                </div>
+
+                <h3>🚀 What's Next?</h3>
+                <p>You now have both halves of this module: the ability to build Editor tools (Lessons 7.1–7.2) and to manage content asynchronously (this lesson). In <strong>Lesson 7.4: A Level-Layout Tool with Addressable Loading</strong>, you'll combine them — an <code>EditorWindow</code> that lists Addressable prefabs and stamps placement markers into a saved layout asset, plus a runtime loader that reads that layout and instantiates each marker's Addressable, releasing every one on unload.</p>
+
+                <div class="card card-accent" style="text-align: center; padding: 2rem;">
+                    <h3>📦 Content, under control</h3>
+                    <p>Load what you need, when you need it, and release it when you're done. Master that loop and your game's memory footprint becomes a decision you make, not an accident you suffer.</p>
+                </div>
+            </section>
+
+            <nav class="lesson-nav" aria-label="Lesson Navigation">
+                <a href="lesson_32.html" class="prev-lesson">← Previous: EditorWindows with UI Toolkit</a>
+                <a href="index.html" class="home-link">🏠 Course Home</a>
+                <a href="lesson_34.html" class="next-lesson">Next: A Level-Layout Tool with Addressable Loading →</a>
+            </nav>
+        </div>
+    </main>
+
+    <footer class="site-footer">
+        <p>&copy; 2026 Ray de la Paz. All rights reserved.</p>
+        <div class="footer-links">
+            <a href="https://rays-home.netlify.app/">Ray's House of Fun</a>
+            <a href="https://rays-home.netlify.app/contact">Contact</a>
+            <a href="#" id="print-button">Print Page</a>
+        </div>
+        <p><small>Press <kbd>?</kbd> for keyboard shortcuts</small></p>
+    </footer>
+
+    <script src="js/clipboard.js"></script>
+    <script src="js/course-enhancements.js"></script>
+</body>
+</html>
